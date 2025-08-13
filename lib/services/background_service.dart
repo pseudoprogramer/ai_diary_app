@@ -72,7 +72,9 @@ class BackgroundService {
 
   static Future<void> _maybeRunDaily(HomeViewModel vm) async {
     final now = DateTime.now();
-    final isMidnightWindow = now.hour == vm.runHour && now.minute == vm.runMinute;
+    // Allow a small minute window to improve reliability of iOS Background Fetch timing
+    final bool inMinuteWindow = (now.minute - vm.runMinute).abs() <= 5;
+    final isMidnightWindow = now.hour == vm.runHour && inMinuteWindow;
     if (!vm.autoEnabled) return; // run only when auto is enabled
     final alreadyRan = await _isAlreadyRanToday(now);
     if (!isMidnightWindow || alreadyRan) {

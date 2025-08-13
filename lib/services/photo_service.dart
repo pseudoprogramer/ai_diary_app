@@ -139,9 +139,9 @@ class PhotoService {
     final List<_Scored> candidates = [];
     for (final a in sorted) {
       if (usedIds.contains(a.id)) continue;
-      final bytes = await a.originBytes;
-      final int len = bytes?.length ?? 0;
-      candidates.add(_Scored(a, scoreOf(a, len)));
+      // Avoid heavy originBytes read; approximate size using width*height
+      final int lenApprox = (a.width * a.height) ~/ 4; // 4 bytes per pixel rough
+      candidates.add(_Scored(a, scoreOf(a, lenApprox)));
     }
     candidates.sort((a, b) => b.score.compareTo(a.score));
 

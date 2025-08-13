@@ -131,12 +131,13 @@ class GeminiService {
       if (img == null) return fallbackImageBytes;
       final image_lib.Image processed = image_lib.adjustColor(
         img,
-        saturation: 0.8,
-        brightness: 0.05,
-        gamma: 0.95,
+        saturation: 0.85,
+        brightness: 0.06,
+        gamma: 0.96,
       );
-      final image_lib.Image blurred = image_lib.gaussianBlur(processed, radius: 1);
-      final Uint8List out = Uint8List.fromList(image_lib.encodePng(blurred));
+      // Use a tiny blur for speed; iOS devices already have strong GPUs but we run on CPU here
+      final image_lib.Image blurred = image_lib.gaussianBlur(processed, radius: 0);
+      final Uint8List out = Uint8List.fromList(image_lib.encodeJpg(blurred, quality: 92));
       return out;
     } catch (_) {
       return fallbackImageBytes;
