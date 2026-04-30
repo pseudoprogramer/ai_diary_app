@@ -53,7 +53,7 @@ class GeminiService {
       '해시태그, 목록, 설명문은 쓰지 마.',
     ].join('\n');
 
-    return _postTextPrompt(prompt) ??
+    return await _postTextPrompt(prompt) ??
         _localDiaryFallback(
           date: date,
           mood: mood,
@@ -83,7 +83,7 @@ class GeminiService {
     );
   }
 
-  Future<String>? _postTextPrompt(String prompt) async {
+  Future<String?> _postTextPrompt(String prompt) async {
     final Map<String, dynamic> body = {
       'contents': [
         {
@@ -123,56 +123,36 @@ class GeminiService {
   Future<Uint8List> generateIllustrationBytes({
     required String diaryText,
     required Uint8List fallbackImageBytes,
-    bool enableCloud = true,
+    bool enableCloud = false,
     int? width,
     int? height,
     String? style,
   }) async {
-    final String? imageApiUrl = dotenv.env['IMAGE_API_URL'];
-    final String? imageApiKey = dotenv.env['IMAGE_API_KEY'];
-    if (enableCloud && imageApiUrl != null && imageApiUrl.trim().isNotEmpty) {
-      try {
-        final uri = Uri.parse(imageApiUrl);
-        final headers = <String, String>{'Content-Type': 'application/json'};
-        if (imageApiKey != null && imageApiKey.isNotEmpty) {
-          headers['Authorization'] = 'Bearer $imageApiKey';
-        }
-        final Map<String, dynamic> payload = {
-          'prompt': '$diaryText\n\nsoft pastel diary illustration, warm light, watercolor texture',
-        };
-        if (width != null) payload['width'] = width;
-        if (height != null) payload['height'] = height;
-        if (style != null && style.trim().isNotEmpty) payload['style'] = style;
-        final resp = await http
-            .post(uri, headers: headers, body: jsonEncode(payload))
-            .timeout(const Duration(seconds: 30));
-        if (resp.statusCode == 200) {
-          final Map<String, dynamic> json = jsonDecode(resp.body) as Map<String, dynamic>;
-          final String? b64 = (json['image_base64'] as String?) ?? (json['image'] as String?);
-          if (b64 != null && b64.isNotEmpty) {
-            final String pure = b64.contains(',') ? b64.split(',').last : b64;
-            final Uint8List bytes = base64Decode(pure);
-            if (bytes.isNotEmpty) return bytes;
-          }
-        }
-      } catch (_) {
-        // Fall through to local filter.
-      }
-    }
+    return _generateLocalPastelImage(fallbackImageBytes);
+  }
 
+  Future<Uint8List> _generateLocalPastelImage(Uint8List sourceBytes) async {
     try {
-      final img = image_lib.decodeImage(fallbackImageBytes);
-      if (img == null) return fallbackImageBytes;
-      final image_lib.Image processed = image_lib.adjustColor(
+      final img = image_lib.decodeImage(sourceBytes);
+      if (img == null) return sourceBytes;
+
+      final resized = image_lib.copyResize(
         img,
-        saturation: 0.78,
-        brightness: 0.08,
-        gamma: 0.96,
+        width: img.width > 1024 ? 1024 : img.width,
+        interpolation: image_lib.Interpolation.average,
       );
-      final Uint8List out = Uint8List.fromList(image_lib.encodeJpg(processed, quality: 92));
-      return out;
+      final softened = image_lib.gaussianBlur(resized, radius: 1);
+      final pastel = image_lib.adjustColor(
+        softened,
+        saturation: 0.72,
+        brightness: 0.09,
+        contrast: 0.92,
+        gamma: 0.95,
+      );
+
+      return Uint8List.fromList(image_lib.encodeJpg(pastel, quality: 92));
     } catch (_) {
-      return fallbackImageBytes;
+      return sourceBytes;
     }
   }
 
