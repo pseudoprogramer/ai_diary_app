@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../models/day_context.dart';
 import '../viewmodels/home_viewmodel.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
@@ -80,20 +81,22 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 104),
               children: [
                 Text(
-                  '오늘의 재료',
+                  '오늘의 흐름',
                   style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '일정, 사진, 기분을 한 페이지의 감성 다이어리로 정리합니다.',
+                  '캘린더와 사진첩의 시간 정보를 맞춰 하루의 장면을 먼저 정리합니다.',
                   style: theme.textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 16),
+                const _TodayFlowSection(),
+                const SizedBox(height: 12),
                 _Section(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _LabelRow(icon: Icons.mood_rounded, label: '기분'),
+                      _LabelRow(icon: Icons.mood_rounded, label: '오늘의 감정'),
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 8,
@@ -129,15 +132,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _LabelRow(icon: Icons.event_note_rounded, label: '오늘 일정'),
+                      _LabelRow(icon: Icons.event_note_rounded, label: '추가로 남길 일정/상황'),
                       const SizedBox(height: 10),
                       TextField(
                         controller: _scheduleController,
-                        maxLines: 5,
-                        minLines: 4,
+                        maxLines: 4,
+                        minLines: 3,
                         onChanged: vm.setScheduleText,
                         decoration: const InputDecoration(
-                          hintText: '- 12:00 친구와 점심\n- 15:00 카페에서 작업\n- 19:00 산책',
+                          hintText: '사진이나 캘린더에 없는 일을 적어주세요.\n예: 친구와 잠깐 통화, 갑자기 들른 카페',
                           border: OutlineInputBorder(),
                         ),
                       ),
@@ -162,31 +165,31 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Row(
                         children: [
-                          const Expanded(child: _LabelRow(icon: Icons.photo_library_rounded, label: '오늘 사진')),
+                          const Expanded(child: _LabelRow(icon: Icons.photo_library_rounded, label: '대표 사진')),
                           IconButton(
-                            tooltip: '사진 선택',
+                            tooltip: '사진 직접 선택',
                             onPressed: vm.isLoading ? null : vm.pickPhotos,
                             icon: const Icon(Icons.add_photo_alternate_rounded),
                           ),
                           IconButton(
-                            tooltip: '사진 비우기',
+                            tooltip: '직접 선택한 사진 비우기',
                             onPressed: vm.selectedPhotoBytes.isEmpty || vm.isLoading ? null : vm.clearSelectedPhotos,
                             icon: const Icon(Icons.delete_outline_rounded),
                           ),
                         ],
                       ),
                       const SizedBox(height: 10),
-                      if (vm.selectedPhotoBytes.isEmpty)
+                      if (vm.selectedPhotoBytes.isEmpty && vm.todayRepresentativeImageBytes == null)
                         Container(
                           height: 136,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: colors.surfaceContainerHighest.withValues(alpha: 0.55),
+                            color: colors.surfaceContainerHighest.withOpacity(0.55),
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(color: const Color(0xFFEADFD3)),
                           ),
                           child: Text(
-                            '오늘을 보여주는 사진을 골라주세요.',
+                            '오늘 사진을 찾으면 자동으로 대표 사진이 표시됩니다.',
                             style: theme.textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
                           ),
                         )
@@ -195,13 +198,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           height: 132,
                           child: ListView.separated(
                             scrollDirection: Axis.horizontal,
-                            itemCount: vm.selectedPhotoBytes.length,
+                            itemCount: vm.selectedPhotoBytes.isNotEmpty ? vm.selectedPhotoBytes.length : 1,
                             separatorBuilder: (_, __) => const SizedBox(width: 10),
                             itemBuilder: (context, index) {
+                              final bytes = vm.selectedPhotoBytes.isNotEmpty
+                                  ? vm.selectedPhotoBytes[index]
+                                  : vm.todayRepresentativeImageBytes!;
                               return ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
                                 child: Image.memory(
-                                  vm.selectedPhotoBytes[index],
+                                  bytes,
                                   width: 132,
                                   height: 132,
                                   fit: BoxFit.cover,
@@ -243,12 +249,144 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.auto_awesome_rounded),
-              label: const Text('다이어리 만들기'),
+              label: const Text('오늘 페이지 만들기'),
             );
           },
         ),
       ),
     );
+  }
+}
+
+class _TodayFlowSection extends StatelessWidget {
+  const _TodayFlowSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Consumer<HomeViewModel>(
+      builder: (context, vm, _) {
+        return _Section(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(child: _LabelRow(icon: Icons.timeline_rounded, label: '자동 정리된 흐름')),
+                  IconButton(
+                    tooltip: '다시 불러오기',
+                    onPressed: vm.isContextLoading ? null : vm.refreshTodayContext,
+                    icon: vm.isContextLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (vm.isContextLoading && vm.todaySegments.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (vm.todaySegments.isEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceContainerHighest.withOpacity(0.45),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '아직 오늘의 사진이나 캘린더 일정을 찾지 못했어요. 권한을 허용했는지 확인하거나 사진을 직접 골라주세요.',
+                    style: theme.textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+                  ),
+                )
+              else
+                Column(
+                  children: [
+                    for (final segment in vm.todaySegments.take(8))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _SegmentTile(segment: segment),
+                      ),
+                  ],
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SegmentTile extends StatelessWidget {
+  final DaySegment segment;
+
+  const _SegmentTile({required this.segment});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isCalendar = segment.source == 'calendar';
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isCalendar ? const Color(0xFFF4F8F1) : const Color(0xFFF8F3EF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFEADFD3)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            isCalendar ? Icons.event_available_rounded : Icons.photo_camera_rounded,
+            color: const Color(0xFF6F8F6C),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  segment.title,
+                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _subtitle(),
+                  style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${(segment.confidence * 100).round()}%',
+            style: theme.textTheme.labelSmall?.copyWith(color: colors.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _subtitle() {
+    final parts = <String>[segment.timeRange];
+    if (segment.calendarName != null && segment.calendarName!.trim().isNotEmpty) {
+      parts.add(segment.calendarName!.trim());
+    }
+    if (segment.photoCount > 0) {
+      parts.add('사진 ${segment.photoCount}장');
+    }
+    if (segment.placeHint != null && segment.placeHint!.trim().isNotEmpty) {
+      parts.add(segment.placeHint!.trim());
+    }
+    return parts.join(' · ');
   }
 }
 
@@ -417,7 +555,7 @@ class _Section extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.78),
+        color: Colors.white.withOpacity(0.78),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFEADFD3)),
       ),
