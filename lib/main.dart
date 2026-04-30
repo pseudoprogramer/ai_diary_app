@@ -15,21 +15,22 @@ Future<void> main() async {
   try {
     await dotenv.load(fileName: ".env");
   } catch (_) {
-    // .env 파일이 없어도 앱은 실행되도록 허용
+    // .env 파일이 없어도 앱은 실행됩니다.
   }
 
-  runApp(const AiDiaryApp());
+  runApp(const HarugyeolApp());
 }
 
-class AiDiaryApp extends StatefulWidget {
-  const AiDiaryApp({super.key});
+class HarugyeolApp extends StatefulWidget {
+  const HarugyeolApp({super.key});
 
   @override
-  State<AiDiaryApp> createState() => _AiDiaryAppState();
+  State<HarugyeolApp> createState() => _HarugyeolAppState();
 }
 
-class _AiDiaryAppState extends State<AiDiaryApp> {
+class _HarugyeolAppState extends State<HarugyeolApp> {
   bool _showOnboarding = false;
+
   @override
   void initState() {
     super.initState();
@@ -50,17 +51,19 @@ class _AiDiaryAppState extends State<AiDiaryApp> {
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'AI 그림일기',
+        title: '하루결',
         navigatorKey: NavigationService.navigatorKey,
         theme: ThemeData(
-          colorSchemeSeed: const Color(0xFF82B1FF),
+          colorSchemeSeed: const Color(0xFF8BA888),
           useMaterial3: true,
           brightness: Brightness.light,
+          fontFamily: 'Pretendard',
         ),
         darkTheme: ThemeData(
-          colorSchemeSeed: const Color(0xFF82B1FF),
+          colorSchemeSeed: const Color(0xFF8BA888),
           useMaterial3: true,
           brightness: Brightness.dark,
+          fontFamily: 'Pretendard',
         ),
         themeMode: ThemeMode.system,
         routes: {
@@ -80,6 +83,3 @@ class _AiDiaryAppState extends State<AiDiaryApp> {
     );
   }
 }
-
-
-
