@@ -28,11 +28,7 @@ class OnboardingScreen extends StatelessWidget {
                   await Permission.locationAlways.request();
                   await Permission.photos.request();
                   await Permission.notification.request();
-                  // iOS 17+: calendar 권한 분리 대응
-                  final full = await Permission.calendarFullAccess.request();
-                  if (!full.isGranted) {
-                    await Permission.calendarReadOnly.request();
-                  }
+                  await Permission.calendarFullAccess.request();
                   onFinish();
                 },
                 child: const Text('권한 허용하고 시작하기'),

@@ -57,13 +57,11 @@ class _HarugyeolAppState extends State<HarugyeolApp> {
           colorSchemeSeed: const Color(0xFF8BA888),
           useMaterial3: true,
           brightness: Brightness.light,
-          fontFamily: 'Pretendard',
         ),
         darkTheme: ThemeData(
           colorSchemeSeed: const Color(0xFF8BA888),
           useMaterial3: true,
           brightness: Brightness.dark,
-          fontFamily: 'Pretendard',
         ),
         themeMode: ThemeMode.system,
         routes: {

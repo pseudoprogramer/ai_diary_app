@@ -72,10 +72,10 @@ class SettingsScreen extends StatelessWidget {
                 onTap: () => _editHistoryLimit(context, vm),
               ),
               const Divider(height: 24),
-              ListTile(
-                title: const Text('권한 설정 열기'),
-                subtitle: const Text('위치, 사진, 캘린더 권한을 확인합니다.'),
-                trailing: const Icon(Icons.open_in_new),
+              const ListTile(
+                title: Text('권한 설정 열기'),
+                subtitle: Text('위치, 사진, 캘린더 권한을 확인합니다.'),
+                trailing: Icon(Icons.open_in_new),
                 onTap: openAppSettings,
               ),
               ListTile(

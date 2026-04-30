@@ -1,9 +1,7 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:exif/exif.dart';
 import 'package:flutter/foundation.dart';
-import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -592,13 +590,12 @@ class HomeViewModel extends ChangeNotifier {
         _setError('저장할 이미지가 없습니다.');
         return false;
       }
-      final name = 'harugyeol_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final result = await ImageGallerySaver.saveImage(bytes, name: name, quality: 100);
-      final success = result != null && result['isSuccess'] == true;
-      if (!success) _setError('갤러리에 저장하지 못했습니다.');
-      return success;
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File('${dir.path}/harugyeol_saved_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await file.writeAsBytes(bytes, flush: true);
+      return true;
     } catch (_) {
-      _setError('갤러리에 저장하는 중 오류가 발생했습니다.');
+      _setError('이미지를 저장하는 중 오류가 발생했습니다.');
       return false;
     }
   }

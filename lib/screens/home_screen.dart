@@ -96,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _LabelRow(icon: Icons.mood_rounded, label: '오늘의 감정'),
+                      const _LabelRow(icon: Icons.mood_rounded, label: '오늘의 감정'),
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 8,
@@ -112,7 +112,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             .toList(),
                       ),
                       const SizedBox(height: 18),
-                      _LabelRow(icon: Icons.edit_note_rounded, label: '문체'),
+                      const _LabelRow(icon: Icons.edit_note_rounded, label: '문체'),
                       const SizedBox(height: 10),
                       SegmentedButton<String>(
                         segments: const [
@@ -132,7 +132,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _LabelRow(icon: Icons.event_note_rounded, label: '추가로 남길 일정/상황'),
+                      const _LabelRow(icon: Icons.event_note_rounded, label: '추가로 남길 일정/상황'),
                       const SizedBox(height: 10),
                       TextField(
                         controller: _scheduleController,
@@ -145,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       const SizedBox(height: 14),
-                      _LabelRow(icon: Icons.short_text_rounded, label: '한 줄 메모'),
+                      const _LabelRow(icon: Icons.short_text_rounded, label: '한 줄 메모'),
                       const SizedBox(height: 10),
                       TextField(
                         controller: _memoController,
@@ -184,7 +184,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           height: 136,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: colors.surfaceContainerHighest.withOpacity(0.55),
+                            color: colors.surfaceContainerHighest.withValues(alpha: 0.55),
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(color: const Color(0xFFEADFD3)),
                           ),
@@ -298,7 +298,7 @@ class _TodayFlowSection extends StatelessWidget {
                   width: double.infinity,
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: colors.surfaceContainerHighest.withOpacity(0.45),
+                    color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -555,7 +555,7 @@ class _Section extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.78),
+        color: Colors.white.withValues(alpha: 0.78),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFEADFD3)),
       ),
