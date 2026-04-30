@@ -21,14 +21,26 @@ Future<void> main() async {
   runApp(const HarugyeolApp());
 }
 
-class HarugyeolApp extends StatefulWidget {
+class HarugyeolApp extends StatelessWidget {
   const HarugyeolApp({super.key});
 
   @override
-  State<HarugyeolApp> createState() => _HarugyeolAppState();
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider(
+      create: (_) => HomeViewModel(),
+      child: const _HarugyeolShell(),
+    );
+  }
 }
 
-class _HarugyeolAppState extends State<HarugyeolApp> {
+class _HarugyeolShell extends StatefulWidget {
+  const _HarugyeolShell();
+
+  @override
+  State<_HarugyeolShell> createState() => _HarugyeolShellState();
+}
+
+class _HarugyeolShellState extends State<_HarugyeolShell> {
   bool _showOnboarding = false;
 
   @override
@@ -45,39 +57,34 @@ class _HarugyeolAppState extends State<HarugyeolApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => HomeViewModel()),
-      ],
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: '하루결',
-        navigatorKey: NavigationService.navigatorKey,
-        theme: ThemeData(
-          colorSchemeSeed: const Color(0xFF8BA888),
-          useMaterial3: true,
-          brightness: Brightness.light,
-        ),
-        darkTheme: ThemeData(
-          colorSchemeSeed: const Color(0xFF8BA888),
-          useMaterial3: true,
-          brightness: Brightness.dark,
-        ),
-        themeMode: ThemeMode.system,
-        routes: {
-          '/history': (_) => const HistoryScreen(autoOpenLatest: true),
-        },
-        home: _showOnboarding
-            ? OnboardingScreen(
-                onFinish: () async {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setBool('onboarding_seen', true);
-                  if (!mounted) return;
-                  setState(() => _showOnboarding = false);
-                },
-              )
-            : const HomeScreen(),
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: '하루결',
+      navigatorKey: NavigationService.navigatorKey,
+      theme: ThemeData(
+        colorSchemeSeed: const Color(0xFF8BA888),
+        useMaterial3: true,
+        brightness: Brightness.light,
       ),
+      darkTheme: ThemeData(
+        colorSchemeSeed: const Color(0xFF8BA888),
+        useMaterial3: true,
+        brightness: Brightness.dark,
+      ),
+      themeMode: ThemeMode.system,
+      routes: {
+        '/history': (_) => const HistoryScreen(autoOpenLatest: true),
+      },
+      home: _showOnboarding
+          ? OnboardingScreen(
+              onFinish: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('onboarding_seen', true);
+                if (!mounted) return;
+                setState(() => _showOnboarding = false);
+              },
+            )
+          : const HomeScreen(),
     );
   }
 }
