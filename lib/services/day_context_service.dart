@@ -99,10 +99,10 @@ class DayContextService {
   }
 
   bool _isNearby(AssetEntity a, AssetEntity b) {
-    final alat = a.latitude;
-    final alon = a.longitude;
-    final blat = b.latitude;
-    final blon = b.longitude;
+    final double? alat = a.latitude;
+    final double? alon = a.longitude;
+    final double? blat = b.latitude;
+    final double? blon = b.longitude;
     if (alat == null || alon == null || blat == null || blon == null) return false;
     if (alat == 0 || alon == 0 || blat == 0 || blon == 0) return false;
     final latDiff = (alat - blat).abs();
@@ -121,8 +121,8 @@ class DayContextService {
 
   String? _firstPlaceHint(List<AssetEntity> photos) {
     for (final photo in photos) {
-      final lat = photo.latitude;
-      final lon = photo.longitude;
+      final double? lat = photo.latitude;
+      final double? lon = photo.longitude;
       if (lat == null || lon == null || lat == 0 || lon == 0) continue;
       return '위도 ${lat.toStringAsFixed(4)}, 경도 ${lon.toStringAsFixed(4)}';
     }
