@@ -9,9 +9,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/day_context.dart';
 import '../models/diary_entry.dart';
 import '../services/calendar_service.dart';
 import '../services/daily_pipeline.dart';
+import '../services/day_context_service.dart';
 import '../services/gemini_service.dart';
 import '../services/location_log_service.dart';
 import '../services/location_service.dart';
@@ -21,11 +23,17 @@ class HomeViewModel extends ChangeNotifier {
   final ImagePicker _imagePicker = ImagePicker();
   final GeminiService _geminiService = GeminiService();
   final LocationService _locationService = const LocationService();
+  final DayContextService _dayContextService = DayContextService(
+    calendarService: CalendarService(),
+    photoService: const PhotoService(),
+  );
 
   bool _isLoading = false;
+  bool _isContextLoading = false;
   String? _diaryText;
   Uint8List? _generatedImageBytes;
   Uint8List? _originalImageBytes;
+  Uint8List? _todayRepresentativeImageBytes;
   DateTime? _lastPhotoTakenAt;
   bool _showOriginal = false;
   String? _lastError;
@@ -36,6 +44,8 @@ class HomeViewModel extends ChangeNotifier {
   String _memo = '';
   List<XFile> _selectedPhotos = const [];
   List<Uint8List> _selectedPhotoBytes = const [];
+  List<DaySegment> _todaySegments = const [];
+  String _todayContextSummary = '';
 
   PositionData? _lastPosition;
   String? _placeLabel;
@@ -62,15 +72,17 @@ class HomeViewModel extends ChangeNotifier {
   DateTime? _lastSampleAt;
   int _runHour = 23;
   int _runMinute = 0;
-  bool _imageCloudEnabled = true;
+  bool _imageCloudEnabled = false;
   int? _imageWidth;
   int? _imageHeight;
   String? _imageStyle;
 
   bool get isLoading => _isLoading;
+  bool get isContextLoading => _isContextLoading;
   String? get diaryText => _diaryText;
   Uint8List? get generatedImageBytes => _generatedImageBytes;
   Uint8List? get originalImageBytes => _originalImageBytes;
+  Uint8List? get todayRepresentativeImageBytes => _todayRepresentativeImageBytes;
   bool get showOriginal => _showOriginal;
   String? get lastError => _lastError;
   String get mood => _mood;
@@ -79,6 +91,8 @@ class HomeViewModel extends ChangeNotifier {
   String get memo => _memo;
   List<XFile> get selectedPhotos => _selectedPhotos;
   List<Uint8List> get selectedPhotoBytes => _selectedPhotoBytes;
+  List<DaySegment> get todaySegments => _todaySegments;
+  String get todayContextSummary => _todayContextSummary;
   PositionData? get lastPosition => _lastPosition;
   String? get placeLabel => _placeLabel;
   List<DiaryEntry> get history => _history;
@@ -99,6 +113,7 @@ class HomeViewModel extends ChangeNotifier {
     await loadHistory();
     await _loadSettings();
     await requestLocationAndFetch();
+    await refreshTodayContext();
   }
 
   Future<void> requestLocationAndFetch() async {
@@ -109,6 +124,30 @@ class HomeViewModel extends ChangeNotifier {
         latitude: pos.latitude,
         longitude: pos.longitude,
       );
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshTodayContext() async {
+    if (_isContextLoading) return;
+    _isContextLoading = true;
+    notifyListeners();
+    try {
+      final context = await _dayContextService.buildTodayContext();
+      _todaySegments = context.segments;
+      _todayContextSummary = context.toPromptSummary();
+      _todayRepresentativeImageBytes = context.representativeImageBytes;
+      if (_selectedPhotoBytes.isEmpty && _todayRepresentativeImageBytes != null) {
+        _originalImageBytes = _todayRepresentativeImageBytes;
+        _generatedImageBytes = _todayRepresentativeImageBytes;
+      }
+      if (_lastPhotoTakenAt == null && context.segments.isNotEmpty) {
+        _lastPhotoTakenAt = context.segments.first.start;
+      }
+    } catch (_) {
+      _setError('오늘의 흐름을 불러오지 못했습니다. 사진/캘린더 권한을 확인해 주세요.');
+    } finally {
+      _isContextLoading = false;
       notifyListeners();
     }
   }
@@ -191,22 +230,25 @@ class HomeViewModel extends ChangeNotifier {
   void clearSelectedPhotos() {
     _selectedPhotos = const [];
     _selectedPhotoBytes = const [];
-    _originalImageBytes = null;
-    _generatedImageBytes = null;
+    _originalImageBytes = _todayRepresentativeImageBytes;
+    _generatedImageBytes = _todayRepresentativeImageBytes;
     notifyListeners();
   }
 
   Future<void> createAiDiary() async {
     await pickPhotos();
-    if (_selectedPhotoBytes.isNotEmpty) {
+    if (_selectedPhotoBytes.isNotEmpty || _todayRepresentativeImageBytes != null) {
       await createDailyDiary();
     }
   }
 
   Future<void> createDailyDiary() async {
     if (_isLoading) return;
-    if (_selectedPhotoBytes.isEmpty) {
-      _setError('먼저 오늘의 사진을 1장 이상 선택해 주세요.');
+    final activePhotoBytes = _selectedPhotoBytes.isNotEmpty
+        ? _selectedPhotoBytes
+        : (_todayRepresentativeImageBytes == null ? const <Uint8List>[] : <Uint8List>[_todayRepresentativeImageBytes!]);
+    if (activePhotoBytes.isEmpty) {
+      _setError('오늘 사진을 찾지 못했습니다. 사진을 직접 선택하거나 사진첩 권한을 확인해 주세요.');
       return;
     }
 
@@ -222,14 +264,17 @@ class HomeViewModel extends ChangeNotifier {
               '위도 ${_lastPosition!.latitude.toStringAsFixed(4)}, 경도 ${_lastPosition!.longitude.toStringAsFixed(4)}');
       final routeSummary = await _buildRouteSummaryForToday();
       final eventSummary = await CalendarService().buildTodaySummary();
+      final scheduleSource = _scheduleText.trim().isNotEmpty
+          ? _scheduleText
+          : (_todayContextSummary.trim().isNotEmpty ? _todayContextSummary : (eventSummary ?? ''));
 
       final text = await _geminiService.generateDiaryFromInputs(
         date: takenAt,
         mood: _mood,
         tone: _tone,
-        scheduleText: _scheduleText.trim().isEmpty ? eventSummary : _scheduleText,
+        scheduleText: scheduleSource,
         memo: _memo,
-        photoCount: _selectedPhotoBytes.length,
+        photoCount: activePhotoBytes.length,
         locationHint: locationHint,
         routeSummary: routeSummary,
         eventSummary: eventSummary,
@@ -238,13 +283,14 @@ class HomeViewModel extends ChangeNotifier {
 
       final imageBytes = await _geminiService.generateIllustrationBytes(
         diaryText: text,
-        fallbackImageBytes: _selectedPhotoBytes.first,
-        enableCloud: _imageCloudEnabled,
+        fallbackImageBytes: activePhotoBytes.first,
+        enableCloud: false,
         width: _imageWidth,
         height: _imageHeight,
         style: _imageStyle,
       );
       _generatedImageBytes = imageBytes;
+      _originalImageBytes ??= activePhotoBytes.first;
 
       final saved = await _persistEntry(
         text: text,
@@ -315,7 +361,7 @@ class HomeViewModel extends ChangeNotifier {
     _historyLimit = prefs.getInt(_historyLimitKey) ?? 100;
     _runHour = prefs.getInt(_runHourKey) ?? 23;
     _runMinute = prefs.getInt(_runMinuteKey) ?? 0;
-    _imageCloudEnabled = prefs.getBool(_imgCloudKey) ?? true;
+    _imageCloudEnabled = false;
     _imageWidth = prefs.getInt(_imgWidthKey);
     _imageHeight = prefs.getInt(_imgHeightKey);
     _imageStyle = prefs.getString(_imgStyleKey) ?? 'pastel watercolor diary';
@@ -463,9 +509,9 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   Future<void> setImageCloudEnabled(bool value) async {
-    _imageCloudEnabled = value;
+    _imageCloudEnabled = false;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_imgCloudKey, _imageCloudEnabled);
+    await prefs.setBool(_imgCloudKey, false);
     notifyListeners();
   }
 
