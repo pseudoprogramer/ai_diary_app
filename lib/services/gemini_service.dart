@@ -10,9 +10,59 @@ class GeminiService {
 
   String get apiKey => dotenv.env['GEMINI_API_KEY'] ?? '';
 
-  // v1beta REST endpoint for text generation
   static const String _geminiTextEndpoint =
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+
+  Future<String> generateDiaryFromInputs({
+    required DateTime date,
+    required String mood,
+    required String tone,
+    required String scheduleText,
+    required String memo,
+    required int photoCount,
+    String? locationHint,
+    String? routeSummary,
+    String? eventSummary,
+  }) async {
+    if (apiKey.isEmpty) {
+      return _localDiaryFallback(
+        date: date,
+        mood: mood,
+        tone: tone,
+        scheduleText: scheduleText,
+        memo: memo,
+        photoCount: photoCount,
+      );
+    }
+
+    final String prompt = [
+      '너는 한국어 감성 다이어리 에이전트야.',
+      '사용자가 입력한 하루의 재료를 바탕으로 실제 일기처럼 자연스럽게 써줘.',
+      '문체: $tone',
+      '날짜: ${_formatKoreanDateTime(date)}',
+      '기분: $mood',
+      if (scheduleText.trim().isNotEmpty) '일정:\n$scheduleText',
+      if (memo.trim().isNotEmpty) '한 줄 메모: $memo',
+      '사진 수: $photoCount장',
+      if (locationHint != null && locationHint.trim().isNotEmpty) '위치 힌트: $locationHint',
+      if (routeSummary != null && routeSummary.trim().isNotEmpty) '동선 요약: $routeSummary',
+      if (eventSummary != null && eventSummary.trim().isNotEmpty) '캘린더 요약: $eventSummary',
+      '',
+      '출력 형식:',
+      '제목 한 줄을 먼저 쓰고, 빈 줄 뒤에 5~8문장의 일기 본문을 써줘.',
+      '해시태그, 목록, 설명문은 쓰지 마.',
+    ].join('\n');
+
+    return _postTextPrompt(prompt) ??
+        _localDiaryFallback(
+          date: date,
+          mood: mood,
+          tone: tone,
+          scheduleText: scheduleText,
+          memo: memo,
+          photoCount: photoCount,
+        );
+  }
 
   Future<String> generateDiaryText({
     required DateTime photoTakenAt,
@@ -20,34 +70,26 @@ class GeminiService {
     String? routeSummary,
     String? eventSummary,
   }) async {
-    if (apiKey.isEmpty) {
-      return '환경 변수에 GEMINI_API_KEY가 설정되지 않았습니다.';
-    }
+    return generateDiaryFromInputs(
+      date: photoTakenAt,
+      mood: '평온',
+      tone: '감성적으로',
+      scheduleText: eventSummary ?? '',
+      memo: routeSummary ?? '',
+      photoCount: 1,
+      locationHint: locationHint,
+      routeSummary: routeSummary,
+      eventSummary: eventSummary,
+    );
+  }
 
-    final String dateStr = _formatKoreanDateTime(photoTakenAt);
-
-    const String systemStyle =
-        '너는 감성적인 한국어 그림일기 작가야. 간결하지만 따뜻한 4~6문장으로 오늘의 분위기를 담아줘.'
-        ' 구체적인 사물/햇살/바람/색채 같은 감각을 한두 개 녹여주되, 과장되거나 뻔한 표현은 피하고 자연스럽게.'
-        ' 해시태그나 불필요한 설명은 쓰지 말고 결과만 작성해.';
-
-    final String userPrompt = [
-      '다음 정보를 참고해 일기 본문을 작성해줘:',
-      '- 날짜/시간: $dateStr',
-      if (locationHint != null && locationHint.trim().isNotEmpty)
-        '- 위치: $locationHint',
-      if (routeSummary != null && routeSummary.trim().isNotEmpty)
-        '- 오늘의 동선 요약: $routeSummary',
-      if (eventSummary != null && eventSummary.trim().isNotEmpty)
-        '- 오늘의 주요 이벤트: $eventSummary',
-    ].join('\n');
-
+  Future<String>? _postTextPrompt(String prompt) async {
     final Map<String, dynamic> body = {
       'contents': [
         {
           'role': 'user',
           'parts': [
-            {'text': '$systemStyle\n\n$userPrompt'}
+            {'text': prompt}
           ]
         }
       ]
@@ -59,28 +101,22 @@ class GeminiService {
           .post(uri, headers: {'Content-Type': 'application/json'}, body: jsonEncode(body))
           .timeout(const Duration(seconds: 20));
 
-      if (response.statusCode != 200) {
-        return '텍스트 생성에 실패했습니다 (HTTP ${response.statusCode}).';
-      }
+      if (response.statusCode != 200) return null;
 
       final Map<String, dynamic> json = jsonDecode(response.body) as Map<String, dynamic>;
       final List<dynamic>? candidates = json['candidates'] as List<dynamic>?;
-      if (candidates == null || candidates.isEmpty) {
-        return '생성된 결과가 없습니다.';
-      }
+      if (candidates == null || candidates.isEmpty) return null;
 
       final Map<String, dynamic> top = candidates.first as Map<String, dynamic>;
       final Map<String, dynamic>? content = top['content'] as Map<String, dynamic>?;
       final List<dynamic>? parts = content?['parts'] as List<dynamic>?;
-      if (parts == null || parts.isEmpty) {
-        return '생성된 결과가 없습니다.';
-      }
+      if (parts == null || parts.isEmpty) return null;
 
       final Map<String, dynamic> firstPart = parts.first as Map<String, dynamic>;
       final String? text = firstPart['text'] as String?;
-      return (text == null || text.trim().isEmpty) ? '생성된 결과가 없습니다.' : text.trim();
+      return (text == null || text.trim().isEmpty) ? null : text.trim();
     } catch (_) {
-      return '텍스트 생성 중 오류가 발생했습니다.';
+      return null;
     }
   }
 
@@ -92,7 +128,6 @@ class GeminiService {
     int? height,
     String? style,
   }) async {
-    // 1) If configured, try remote image generation API
     final String? imageApiUrl = dotenv.env['IMAGE_API_URL'];
     final String? imageApiKey = dotenv.env['IMAGE_API_KEY'];
     if (enableCloud && imageApiUrl != null && imageApiUrl.trim().isNotEmpty) {
@@ -102,46 +137,70 @@ class GeminiService {
         if (imageApiKey != null && imageApiKey.isNotEmpty) {
           headers['Authorization'] = 'Bearer $imageApiKey';
         }
-        final Map<String, dynamic> payload = {'prompt': diaryText};
+        final Map<String, dynamic> payload = {
+          'prompt': '$diaryText\n\nsoft pastel diary illustration, warm light, watercolor texture',
+        };
         if (width != null) payload['width'] = width;
         if (height != null) payload['height'] = height;
         if (style != null && style.trim().isNotEmpty) payload['style'] = style;
-        final body = jsonEncode(payload);
         final resp = await http
-            .post(uri, headers: headers, body: body)
+            .post(uri, headers: headers, body: jsonEncode(payload))
             .timeout(const Duration(seconds: 30));
         if (resp.statusCode == 200) {
           final Map<String, dynamic> json = jsonDecode(resp.body) as Map<String, dynamic>;
           final String? b64 = (json['image_base64'] as String?) ?? (json['image'] as String?);
           if (b64 != null && b64.isNotEmpty) {
-            // Strip data URI prefix if present
             final String pure = b64.contains(',') ? b64.split(',').last : b64;
             final Uint8List bytes = base64Decode(pure);
             if (bytes.isNotEmpty) return bytes;
           }
         }
       } catch (_) {
-        // Fall through to local filter
+        // Fall through to local filter.
       }
     }
 
-    // 2) Fallback: 간단한 파스텔톤 필터 적용 (로컬 처리)
     try {
       final img = image_lib.decodeImage(fallbackImageBytes);
       if (img == null) return fallbackImageBytes;
       final image_lib.Image processed = image_lib.adjustColor(
         img,
-        saturation: 0.85,
-        brightness: 0.06,
+        saturation: 0.78,
+        brightness: 0.08,
         gamma: 0.96,
       );
-      // Use a tiny blur for speed; iOS devices already have strong GPUs but we run on CPU here
-      final image_lib.Image blurred = image_lib.gaussianBlur(processed, radius: 0);
-      final Uint8List out = Uint8List.fromList(image_lib.encodeJpg(blurred, quality: 92));
+      final Uint8List out = Uint8List.fromList(image_lib.encodeJpg(processed, quality: 92));
       return out;
     } catch (_) {
       return fallbackImageBytes;
     }
+  }
+
+  String _localDiaryFallback({
+    required DateTime date,
+    required String mood,
+    required String tone,
+    required String scheduleText,
+    required String memo,
+    required int photoCount,
+  }) {
+    final scheduleLines = scheduleText
+        .split('\n')
+        .map((line) => line.replaceFirst(RegExp(r'^[-•]\s*'), '').trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    final firstMoment = scheduleLines.isEmpty ? '작은 순간들' : scheduleLines.first;
+    final memoLine = memo.trim().isEmpty ? '' : "\n\n메모로 남긴 '$memo'라는 말이 오늘의 중심에 조용히 남았다.";
+    final photoLine = photoCount == 0 ? '' : '\n\n사진 $photoCount장이 오늘의 색을 붙잡아 주었다.';
+
+    return [
+      '오늘의 작은 결',
+      '',
+      '오늘은 ${date.year}년 ${date.month}월 ${date.day}일, 마음이 $mood 쪽으로 기울어 있던 하루였다.',
+      '$firstMoment에서 시작된 시간은 생각보다 천천히 흘렀고, 그 안에 사소하지만 분명한 장면들이 있었다.$memoLine$photoLine',
+      '크게 특별한 일이 아니어도 하루를 다시 바라보면 나름의 색과 온도가 있다는 걸 알게 된다.',
+      '오늘의 기록은 완벽하지 않아도 충분히 나답고, 그래서 오래 남겨둘 만하다.',
+    ].join('\n');
   }
 
   String _formatKoreanDateTime(DateTime dt) {
@@ -150,5 +209,3 @@ class GeminiService {
 
   String _two(int v) => v.toString().padLeft(2, '0');
 }
-
-
