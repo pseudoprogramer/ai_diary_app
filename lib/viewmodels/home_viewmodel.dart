@@ -368,7 +368,7 @@ class HomeViewModel extends ChangeNotifier {
     _historyLimit = prefs.getInt(_historyLimitKey) ?? 100;
     _runHour = prefs.getInt(_runHourKey) ?? 23;
     _runMinute = prefs.getInt(_runMinuteKey) ?? 0;
-    _imageCloudEnabled = prefs.getBool(_imgCloudKey) ?? false;
+    _imageCloudEnabled = false;
     _imageWidth = prefs.getInt(_imgWidthKey);
     _imageHeight = prefs.getInt(_imgHeightKey);
     _imageStyle = prefs.getString(_imgStyleKey) ?? 'pastel watercolor diary';
@@ -518,9 +518,9 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   Future<void> setImageCloudEnabled(bool value) async {
-    _imageCloudEnabled = value;
+    _imageCloudEnabled = false;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_imgCloudKey, value);
+    await prefs.setBool(_imgCloudKey, false);
     notifyListeners();
   }
 

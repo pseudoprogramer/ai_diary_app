@@ -58,16 +58,8 @@ class SettingsScreen extends StatelessWidget {
               const Divider(height: 24),
               const ListTile(
                 title: Text('이미지 생성 방식'),
-                subtitle:
-                    Text('기본은 기기 안에서 빠르게 만들고, 고품질 모드는 Gemini 이미지 생성을 사용합니다.'),
+                subtitle: Text('사진은 기기 안에서만 감성 변환합니다. 얼굴과 기억이 틀어지는 AI 재생성은 사용하지 않습니다.'),
                 leading: Icon(Icons.memory_rounded),
-              ),
-              SwitchListTile(
-                title: const Text('고품질 AI 이미지 생성'),
-                subtitle: const Text(
-                    '켜면 Gemini로 사진과 일기 내용을 보내 그림을 생성합니다. 실패하면 로컬 생성으로 대체됩니다.'),
-                value: vm.imageCloudEnabled,
-                onChanged: vm.setImageCloudEnabled,
               ),
               ListTile(
                 title: const Text('로컬 이미지 스타일'),

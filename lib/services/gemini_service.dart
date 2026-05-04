@@ -139,10 +139,16 @@ class GeminiService {
     int? height,
     String? style,
   }) async {
-    if (enableCloud && apiKey.isNotEmpty) {
+    final hasReferencePhoto =
+        fallbackImageBytes != null && fallbackImageBytes.isNotEmpty;
+
+    // Reference-photo generation can distort faces and personal memories.
+    // For diary pages, keep real photos on-device and apply a conservative
+    // photo-preserving treatment instead of synthesizing a new scene.
+    if (enableCloud && apiKey.isNotEmpty && !hasReferencePhoto) {
       final cloudImage = await _generateCloudIllustrationBytes(
         diaryText: diaryText,
-        fallbackImageBytes: fallbackImageBytes,
+        fallbackImageBytes: null,
         width: width,
         height: height,
         style: style,
@@ -600,7 +606,6 @@ Uint8List _renderPainterlyImage(Map<String, Object?> message) {
   final sourceBytes = message['bytes'] as Uint8List;
   final width = message['width'] as int?;
   final height = message['height'] as int?;
-  final style = (message['style'] as String?)?.toLowerCase() ?? '';
 
   final decoded = image_lib.decodeImage(sourceBytes);
   if (decoded == null) return sourceBytes;
@@ -608,47 +613,41 @@ Uint8List _renderPainterlyImage(Map<String, Object?> message) {
   final oriented = image_lib.bakeOrientation(decoded);
   final maxSide = _targetMaxSide(oriented, width: width, height: height);
   final resized = _resizeByMaxSide(oriented, maxSide);
-  final styleStrength = style.contains('bold') || style.contains('oil')
-      ? 1.16
-      : style.contains('sketch')
-          ? 0.88
-          : 1.05;
+
+  final softened = image_lib.gaussianBlur(resized, radius: 1);
   final base = image_lib.adjustColor(
+    softened,
+    saturation: 0.86,
+    brightness: 0.055,
+    contrast: 0.94,
+    gamma: 0.98,
+  );
+  final detail = image_lib.adjustColor(
     resized,
-    saturation: styleStrength,
-    brightness: 0.05,
-    contrast: 0.96,
-    gamma: 0.94,
+    saturation: 0.82,
+    brightness: 0.035,
+    contrast: 0.9,
+    gamma: 0.98,
   );
 
-  final blockSize = math.max(96, math.min(base.width, base.height) ~/ 3);
-  final blocky = base.width >= base.height
-      ? image_lib.copyResize(
-          base,
-          width: blockSize,
-          interpolation: image_lib.Interpolation.average,
-        )
-      : image_lib.copyResize(
-          base,
-          height: blockSize,
-          interpolation: image_lib.Interpolation.average,
-        );
-  final wash = image_lib.copyResize(
-    blocky,
-    width: base.width,
-    height: base.height,
-    interpolation: image_lib.Interpolation.nearest,
-  );
   final canvas = image_lib.Image(width: base.width, height: base.height);
+  final cx = (canvas.width - 1) / 2;
+  final cy = (canvas.height - 1) / 2;
+  final maxRadius = math.sqrt(cx * cx + cy * cy);
 
   for (var y = 0; y < canvas.height; y++) {
     for (var x = 0; x < canvas.width; x++) {
-      final p = _readRgbFast(wash, x, y);
-      final source = _readRgbFast(base, x, y);
-      final texture = (_hashFast(x, y) % 15) - 7;
-      final r = (p.r * 0.62 + source.r * 0.2 + 248 * 0.18 + texture).round();
-      final g = (p.g * 0.62 + source.g * 0.2 + 240 * 0.18 + texture).round();
-      final b = (p.b * 0.62 + source.b * 0.2 + 226 * 0.18 + texture).round();
+      final p = _readRgbFast(base, x, y);
+      final d = _readRgbFast(detail, x, y);
+      final texture = (_hashFast(x, y) % 9) - 4;
+      final dist = math.sqrt(math.pow(x - cx, 2) + math.pow(y - cy, 2));
+      final vignette = (1 - (dist / maxRadius) * 0.08).clamp(0.9, 1.0);
+      final r = ((p.r * 0.78 + d.r * 0.12 + 248 * 0.10 + texture) * vignette)
+          .round();
+      final g = ((p.g * 0.78 + d.g * 0.12 + 241 * 0.10 + texture) * vignette)
+          .round();
+      final b = ((p.b * 0.78 + d.b * 0.12 + 230 * 0.10 + texture) * vignette)
+          .round();
       canvas.setPixelRgb(
         x,
         y,
@@ -659,15 +658,34 @@ Uint8List _renderPainterlyImage(Map<String, Object?> message) {
     }
   }
 
-  _drawFastStrokeLayer(canvas, base, step: 9, length: 8, opacity: 0.42);
-  _drawFastStrokeLayer(canvas, base, step: 6, length: 5, opacity: 0.28);
-  _drawFastEdges(canvas, base);
+  _drawSubtleDiaryEdges(canvas, resized);
 
   final adjusted = _averageLumaFast(canvas) < 44
       ? image_lib.adjustColor(canvas, brightness: 0.18, contrast: 0.9)
       : canvas;
 
   return Uint8List.fromList(image_lib.encodeJpg(adjusted, quality: 88));
+}
+
+void _drawSubtleDiaryEdges(image_lib.Image canvas, image_lib.Image source) {
+  for (var y = 2; y < source.height - 2; y += 2) {
+    for (var x = 2; x < source.width - 2; x += 2) {
+      final gradient =
+          (_lumaFast(source, x + 2, y) - _lumaFast(source, x - 2, y)).abs() +
+              (_lumaFast(source, x, y + 2) - _lumaFast(source, x, y - 2)).abs();
+      if (gradient < 42) continue;
+      final p = _readRgbFast(source, x, y);
+      _blendPixelFast(
+        canvas,
+        x,
+        y,
+        (p.r * 0.82 + 42).round().clamp(0, 255),
+        (p.g * 0.82 + 38).round().clamp(0, 255),
+        (p.b * 0.82 + 32).round().clamp(0, 255),
+        0.08,
+      );
+    }
+  }
 }
 
 Uint8List _prepareCloudReferenceImage(Map<String, Object?> message) {
@@ -681,10 +699,10 @@ Uint8List _prepareCloudReferenceImage(Map<String, Object?> message) {
 
 int _targetMaxSide(image_lib.Image source, {int? width, int? height}) {
   final requested = math.max(width ?? 0, height ?? 0);
-  if (requested > 0) return requested.clamp(384, 768).toInt();
+  if (requested > 0) return requested.clamp(512, 1024).toInt();
   final sourceMax = math.max(source.width, source.height);
-  if (sourceMax < 384) return sourceMax;
-  return 512;
+  if (sourceMax < 512) return sourceMax;
+  return 768;
 }
 
 image_lib.Image _resizeByMaxSide(image_lib.Image source, int maxSide) {
@@ -702,108 +720,6 @@ image_lib.Image _resizeByMaxSide(image_lib.Image source, int maxSide) {
     height: maxSide,
     interpolation: image_lib.Interpolation.average,
   );
-}
-
-void _drawFastStrokeLayer(
-  image_lib.Image canvas,
-  image_lib.Image source, {
-  required int step,
-  required int length,
-  required double opacity,
-}) {
-  for (var y = step ~/ 2; y < source.height; y += step) {
-    for (var x = step ~/ 2; x < source.width; x += step) {
-      final jitter = _hashFast(x, y);
-      final sx = (x + jitter % step - step ~/ 2).clamp(0, source.width - 1);
-      final sy =
-          (y + (jitter ~/ 11) % step - step ~/ 2).clamp(0, source.height - 1);
-      final color = _readRgbFast(source, sx, sy);
-      final angle =
-          _fastStrokeAngle(source, sx, sy) + ((jitter % 23) - 11) * 0.018;
-      final strokeLength = math.max(3, length + (jitter % 5) - 2);
-      _drawFastStroke(
-        canvas,
-        sx,
-        sy,
-        color,
-        angle: angle,
-        length: strokeLength,
-        opacity: opacity,
-      );
-    }
-  }
-}
-
-void _drawFastStroke(
-  image_lib.Image canvas,
-  int cx,
-  int cy,
-  _Rgb color, {
-  required double angle,
-  required int length,
-  required double opacity,
-}) {
-  final cosA = math.cos(angle);
-  final sinA = math.sin(angle);
-  for (var i = -length; i <= length; i++) {
-    final t = i / length;
-    final fade = (1 - t.abs() * 0.55) * opacity;
-    final x = (cx + i * cosA).round();
-    final y = (cy + i * sinA).round();
-    if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) continue;
-    final bristle = 0.86 + (_hashFast(x, y) % 18) / 100;
-    _blendPixelFast(
-      canvas,
-      x,
-      y,
-      (color.r * bristle).round().clamp(0, 255),
-      (color.g * bristle).round().clamp(0, 255),
-      (color.b * bristle).round().clamp(0, 255),
-      fade.clamp(0, 1),
-    );
-    final nx = (x - sinA).round();
-    final ny = (y + cosA).round();
-    if (nx >= 0 && nx < canvas.width && ny >= 0 && ny < canvas.height) {
-      _blendPixelFast(
-        canvas,
-        nx,
-        ny,
-        color.r,
-        color.g,
-        color.b,
-        (fade * 0.45).clamp(0, 1),
-      );
-    }
-  }
-}
-
-void _drawFastEdges(image_lib.Image canvas, image_lib.Image source) {
-  for (var y = 2; y < source.height - 2; y += 2) {
-    for (var x = 2; x < source.width - 2; x += 2) {
-      final gradient =
-          (_lumaFast(source, x + 2, y) - _lumaFast(source, x - 2, y)).abs() +
-              (_lumaFast(source, x, y + 2) - _lumaFast(source, x, y - 2)).abs();
-      if (gradient < 34) continue;
-      final p = _readRgbFast(source, x, y);
-      _blendPixelFast(
-        canvas,
-        x,
-        y,
-        (p.r * 0.72).round(),
-        (p.g * 0.72).round(),
-        (p.b * 0.72).round(),
-        0.2,
-      );
-    }
-  }
-}
-
-double _fastStrokeAngle(image_lib.Image image, int x, int y) {
-  final left = _lumaFast(image, (x - 2).clamp(0, image.width - 1), y);
-  final right = _lumaFast(image, (x + 2).clamp(0, image.width - 1), y);
-  final top = _lumaFast(image, x, (y - 2).clamp(0, image.height - 1));
-  final bottom = _lumaFast(image, x, (y + 2).clamp(0, image.height - 1));
-  return math.atan2(bottom - top, right - left) + math.pi / 2;
 }
 
 double _averageLumaFast(image_lib.Image image) {
