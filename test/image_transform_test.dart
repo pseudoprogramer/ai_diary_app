@@ -26,6 +26,7 @@ void main() {
 
     expect(decoded, isNotNull);
     expect(_averageLuma(decoded!), greaterThan(60));
+    expect(_averageDelta(source, decoded), greaterThan(14));
   });
 }
 
@@ -38,6 +39,26 @@ double _averageLuma(image_lib.Image image) {
       total += (p.rNormalized * 255) * 0.299 +
           (p.gNormalized * 255) * 0.587 +
           (p.bNormalized * 255) * 0.114;
+      count++;
+    }
+  }
+  return total / count;
+}
+
+double _averageDelta(image_lib.Image a, image_lib.Image b) {
+  var total = 0.0;
+  var count = 0;
+  final width = a.width < b.width ? a.width : b.width;
+  final height = a.height < b.height ? a.height : b.height;
+  for (var y = 0; y < height; y += 4) {
+    for (var x = 0; x < width; x += 4) {
+      final pa = a.getPixel(x, y);
+      final pb = b.getPixel(x, y);
+      total += ((pa.rNormalized - pb.rNormalized).abs() +
+              (pa.gNormalized - pb.gNormalized).abs() +
+              (pa.bNormalized - pb.bNormalized).abs()) *
+          255 /
+          3;
       count++;
     }
   }

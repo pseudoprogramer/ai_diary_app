@@ -614,39 +614,40 @@ Uint8List _renderPainterlyImage(Map<String, Object?> message) {
   final maxSide = _targetMaxSide(oriented, width: width, height: height);
   final resized = _resizeByMaxSide(oriented, maxSide);
 
-  final softened = image_lib.gaussianBlur(resized, radius: 1);
-  final base = image_lib.adjustColor(
+  final softened = image_lib.gaussianBlur(resized, radius: 2);
+  final vivid = image_lib.adjustColor(
     softened,
-    saturation: 0.86,
-    brightness: 1.055,
-    contrast: 0.94,
-    gamma: 0.98,
+    saturation: 1.18,
+    brightness: 1.09,
+    contrast: 1.06,
+    gamma: 0.92,
   );
   final detail = image_lib.adjustColor(
     resized,
-    saturation: 0.82,
-    brightness: 1.035,
-    contrast: 0.9,
-    gamma: 0.98,
+    saturation: 1.05,
+    brightness: 1.04,
+    contrast: 1.02,
+    gamma: 0.95,
   );
 
-  final canvas = image_lib.Image(width: base.width, height: base.height);
+  final canvas = image_lib.Image(width: vivid.width, height: vivid.height);
   final cx = (canvas.width - 1) / 2;
   final cy = (canvas.height - 1) / 2;
   final maxRadius = math.sqrt(cx * cx + cy * cy);
 
   for (var y = 0; y < canvas.height; y++) {
     for (var x = 0; x < canvas.width; x++) {
-      final p = _readRgbFast(base, x, y);
+      final p = _readRgbFast(vivid, x, y);
       final d = _readRgbFast(detail, x, y);
-      final texture = (_hashFast(x, y) % 9) - 4;
+      final q = _posterizePastel(p, x, y);
+      final texture = (_hashFast(x, y) % 13) - 6;
       final dist = math.sqrt(math.pow(x - cx, 2) + math.pow(y - cy, 2));
-      final vignette = (1 - (dist / maxRadius) * 0.08).clamp(0.9, 1.0);
-      final r = ((p.r * 0.78 + d.r * 0.12 + 248 * 0.10 + texture) * vignette)
+      final vignette = (1 - (dist / maxRadius) * 0.06).clamp(0.92, 1.0);
+      final r = ((q.r * 0.72 + d.r * 0.16 + 250 * 0.12 + texture) * vignette)
           .round();
-      final g = ((p.g * 0.78 + d.g * 0.12 + 241 * 0.10 + texture) * vignette)
+      final g = ((q.g * 0.72 + d.g * 0.16 + 242 * 0.12 + texture) * vignette)
           .round();
-      final b = ((p.b * 0.78 + d.b * 0.12 + 230 * 0.10 + texture) * vignette)
+      final b = ((q.b * 0.72 + d.b * 0.16 + 230 * 0.12 + texture) * vignette)
           .round();
       canvas.setPixelRgb(
         x,
@@ -658,6 +659,8 @@ Uint8List _renderPainterlyImage(Map<String, Object?> message) {
     }
   }
 
+  _drawPainterlyStrokeLayer(canvas, vivid, step: 11, length: 13, opacity: 0.30);
+  _drawPainterlyStrokeLayer(canvas, vivid, step: 7, length: 8, opacity: 0.24);
   _drawSubtleDiaryEdges(canvas, resized);
 
   final adjusted = _averageLumaFast(canvas) < 44
@@ -672,6 +675,98 @@ Uint8List debugRenderPainterlyImageForTest(Uint8List sourceBytes) {
   return _renderPainterlyImage({'bytes': sourceBytes});
 }
 
+_Rgb _posterizePastel(_Rgb color, int x, int y) {
+  int quantize(int v, int levels) {
+    final q = (v / 255 * (levels - 1)).round();
+    return (q * 255 / (levels - 1)).round().clamp(0, 255);
+  }
+
+  final levels = 11 + (_hashFast(x ~/ 24, y ~/ 24) % 4);
+  final r = quantize(color.r, levels);
+  final g = quantize(color.g, levels);
+  final b = quantize(color.b, levels);
+  final luma = (r * 0.299 + g * 0.587 + b * 0.114);
+  final lift = luma < 86 ? 24 : 12;
+  return _Rgb(
+    (r * 0.86 + 255 * 0.14 + lift).round().clamp(0, 255),
+    (g * 0.86 + 246 * 0.14 + lift).round().clamp(0, 255),
+    (b * 0.86 + 232 * 0.14 + lift).round().clamp(0, 255),
+  );
+}
+
+void _drawPainterlyStrokeLayer(
+  image_lib.Image canvas,
+  image_lib.Image source, {
+  required int step,
+  required int length,
+  required double opacity,
+}) {
+  for (var y = step ~/ 2; y < source.height; y += step) {
+    for (var x = step ~/ 2; x < source.width; x += step) {
+      final jitter = _hashFast(x, y);
+      final sx = (x + jitter % step - step ~/ 2).clamp(0, source.width - 1);
+      final sy =
+          (y + (jitter ~/ 9) % step - step ~/ 2).clamp(0, source.height - 1);
+      final color = _posterizePastel(_readRgbFast(source, sx, sy), sx, sy);
+      final angle = _strokeAngleFast(source, sx, sy) + ((jitter % 21) - 10) * 0.025;
+      final strokeLength = math.max(4, length + (jitter % 7) - 3);
+      _drawPainterlyStroke(
+        canvas,
+        sx,
+        sy,
+        color,
+        angle: angle,
+        length: strokeLength,
+        opacity: opacity,
+      );
+    }
+  }
+}
+
+void _drawPainterlyStroke(
+  image_lib.Image canvas,
+  int cx,
+  int cy,
+  _Rgb color, {
+  required double angle,
+  required int length,
+  required double opacity,
+}) {
+  final cosA = math.cos(angle);
+  final sinA = math.sin(angle);
+  final halfWidth = math.max(1, length ~/ 4);
+  for (var i = -length; i <= length; i++) {
+    final t = i / length;
+    final fade = (1 - t.abs() * 0.62) * opacity;
+    final centerX = cx + i * cosA;
+    final centerY = cy + i * sinA;
+    for (var w = -halfWidth; w <= halfWidth; w++) {
+      final edge = 1 - (w.abs() / (halfWidth + 1));
+      final x = (centerX - w * sinA).round();
+      final y = (centerY + w * cosA).round();
+      if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) continue;
+      final bristle = 0.92 + (_hashFast(x, y) % 17) / 100;
+      _blendPixelFast(
+        canvas,
+        x,
+        y,
+        (color.r * bristle).round().clamp(0, 255),
+        (color.g * bristle).round().clamp(0, 255),
+        (color.b * bristle).round().clamp(0, 255),
+        (fade * edge).clamp(0, 1),
+      );
+    }
+  }
+}
+
+double _strokeAngleFast(image_lib.Image image, int x, int y) {
+  final left = _lumaFast(image, (x - 2).clamp(0, image.width - 1), y);
+  final right = _lumaFast(image, (x + 2).clamp(0, image.width - 1), y);
+  final top = _lumaFast(image, x, (y - 2).clamp(0, image.height - 1));
+  final bottom = _lumaFast(image, x, (y + 2).clamp(0, image.height - 1));
+  return math.atan2(bottom - top, right - left) + math.pi / 2;
+}
+
 void _drawSubtleDiaryEdges(image_lib.Image canvas, image_lib.Image source) {
   for (var y = 2; y < source.height - 2; y += 2) {
     for (var x = 2; x < source.width - 2; x += 2) {
@@ -680,14 +775,15 @@ void _drawSubtleDiaryEdges(image_lib.Image canvas, image_lib.Image source) {
               (_lumaFast(source, x, y + 2) - _lumaFast(source, x, y - 2)).abs();
       if (gradient < 42) continue;
       final p = _readRgbFast(source, x, y);
+      final edgeTone = _posterizePastel(p, x, y);
       _blendPixelFast(
         canvas,
         x,
         y,
-        (p.r * 0.82 + 42).round().clamp(0, 255),
-        (p.g * 0.82 + 38).round().clamp(0, 255),
-        (p.b * 0.82 + 32).round().clamp(0, 255),
-        0.08,
+        (edgeTone.r * 0.68).round().clamp(0, 255),
+        (edgeTone.g * 0.68).round().clamp(0, 255),
+        (edgeTone.b * 0.68).round().clamp(0, 255),
+        0.16,
       );
     }
   }
