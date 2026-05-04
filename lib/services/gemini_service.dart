@@ -614,41 +614,59 @@ Uint8List _renderPainterlyImage(Map<String, Object?> message) {
   final maxSide = _targetMaxSide(oriented, width: width, height: height);
   final resized = _resizeByMaxSide(oriented, maxSide);
 
-  final softened = image_lib.gaussianBlur(resized, radius: 2);
-  final vivid = image_lib.adjustColor(
+  final softened = image_lib.gaussianBlur(resized, radius: 3);
+  final base = image_lib.adjustColor(
     softened,
-    saturation: 1.18,
-    brightness: 1.09,
-    contrast: 1.06,
-    gamma: 0.92,
+    saturation: 0.72,
+    brightness: 1.12,
+    contrast: 0.82,
+    gamma: 0.9,
   );
   final detail = image_lib.adjustColor(
     resized,
-    saturation: 1.05,
-    brightness: 1.04,
-    contrast: 1.02,
-    gamma: 0.95,
+    saturation: 0.68,
+    brightness: 1.07,
+    contrast: 0.86,
+    gamma: 0.92,
+  );
+  final washSmall = image_lib.copyResize(
+    base,
+    width: math.max(64, base.width ~/ 5),
+    height: math.max(64, base.height ~/ 5),
+    interpolation: image_lib.Interpolation.average,
+  );
+  final wash = image_lib.copyResize(
+    washSmall,
+    width: base.width,
+    height: base.height,
+    interpolation: image_lib.Interpolation.linear,
   );
 
-  final canvas = image_lib.Image(width: vivid.width, height: vivid.height);
+  final canvas = image_lib.Image(width: base.width, height: base.height);
   final cx = (canvas.width - 1) / 2;
   final cy = (canvas.height - 1) / 2;
   final maxRadius = math.sqrt(cx * cx + cy * cy);
 
   for (var y = 0; y < canvas.height; y++) {
     for (var x = 0; x < canvas.width; x++) {
-      final p = _readRgbFast(vivid, x, y);
+      final p = _readRgbFast(base, x, y);
       final d = _readRgbFast(detail, x, y);
-      final q = _posterizePastel(p, x, y);
-      final texture = (_hashFast(x, y) % 13) - 6;
+      final w = _readRgbFast(wash, x, y);
+      final q = _pastelWashColor(
+        _Rgb(
+          (p.r * 0.46 + w.r * 0.38 + d.r * 0.16).round(),
+          (p.g * 0.46 + w.g * 0.38 + d.g * 0.16).round(),
+          (p.b * 0.46 + w.b * 0.38 + d.b * 0.16).round(),
+        ),
+        x,
+        y,
+      );
+      final texture = (_hashFast(x, y) % 9) - 4;
       final dist = math.sqrt(math.pow(x - cx, 2) + math.pow(y - cy, 2));
-      final vignette = (1 - (dist / maxRadius) * 0.06).clamp(0.92, 1.0);
-      final r = ((q.r * 0.72 + d.r * 0.16 + 250 * 0.12 + texture) * vignette)
-          .round();
-      final g = ((q.g * 0.72 + d.g * 0.16 + 242 * 0.12 + texture) * vignette)
-          .round();
-      final b = ((q.b * 0.72 + d.b * 0.16 + 230 * 0.12 + texture) * vignette)
-          .round();
+      final vignette = (1 - (dist / maxRadius) * 0.04).clamp(0.94, 1.0);
+      final r = ((q.r + texture) * vignette).round();
+      final g = ((q.g + texture) * vignette).round();
+      final b = ((q.b + texture) * vignette).round();
       canvas.setPixelRgb(
         x,
         y,
@@ -659,9 +677,10 @@ Uint8List _renderPainterlyImage(Map<String, Object?> message) {
     }
   }
 
-  _drawPainterlyStrokeLayer(canvas, vivid, step: 11, length: 13, opacity: 0.30);
-  _drawPainterlyStrokeLayer(canvas, vivid, step: 7, length: 8, opacity: 0.24);
-  _drawSubtleDiaryEdges(canvas, resized);
+  _drawPaperGrain(canvas);
+  _drawWatercolorStrokeLayer(canvas, base, step: 13, length: 12, opacity: 0.10);
+  _drawWatercolorStrokeLayer(canvas, base, step: 8, length: 7, opacity: 0.08);
+  _drawWarmDiaryEdges(canvas, resized);
 
   final adjusted = _averageLumaFast(canvas) < 44
       ? image_lib.adjustColor(canvas, brightness: 1.18, contrast: 0.9)
@@ -675,26 +694,56 @@ Uint8List debugRenderPainterlyImageForTest(Uint8List sourceBytes) {
   return _renderPainterlyImage({'bytes': sourceBytes});
 }
 
-_Rgb _posterizePastel(_Rgb color, int x, int y) {
-  int quantize(int v, int levels) {
-    final q = (v / 255 * (levels - 1)).round();
-    return (q * 255 / (levels - 1)).round().clamp(0, 255);
+_Rgb _pastelWashColor(_Rgb color, int x, int y) {
+  int softQuantize(num v) {
+    const step = 14;
+    return ((v / step).round() * step).clamp(0, 255).toInt();
   }
 
-  final levels = 11 + (_hashFast(x ~/ 24, y ~/ 24) % 4);
-  final r = quantize(color.r, levels);
-  final g = quantize(color.g, levels);
-  final b = quantize(color.b, levels);
-  final luma = (r * 0.299 + g * 0.587 + b * 0.114);
-  final lift = luma < 86 ? 24 : 12;
+  final luma = color.r * 0.299 + color.g * 0.587 + color.b * 0.114;
+  final maxChannel = math.max(color.r, math.max(color.g, color.b));
+  final minChannel = math.min(color.r, math.min(color.g, color.b));
+  final chroma = maxChannel - minChannel;
+  final colorWeight = chroma > 82 ? 0.42 : 0.52;
+  final grayWeight = chroma > 82 ? 0.28 : 0.22;
+  const paperWeight = 0.30;
+  final lift = luma < 70
+      ? 32
+      : luma < 120
+          ? 18
+          : 8;
+  final grain = (_hashFast(x ~/ 7, y ~/ 7) % 7) - 3;
+
   return _Rgb(
-    (r * 0.86 + 255 * 0.14 + lift).round().clamp(0, 255),
-    (g * 0.86 + 246 * 0.14 + lift).round().clamp(0, 255),
-    (b * 0.86 + 232 * 0.14 + lift).round().clamp(0, 255),
+    softQuantize(
+        color.r * colorWeight + luma * grayWeight + 250 * paperWeight + lift + grain),
+    softQuantize(
+        color.g * colorWeight + luma * grayWeight + 242 * paperWeight + lift + grain),
+    softQuantize(
+        color.b * colorWeight + luma * grayWeight + 228 * paperWeight + lift + grain),
   );
 }
 
-void _drawPainterlyStrokeLayer(
+void _drawPaperGrain(image_lib.Image canvas) {
+  for (var y = 0; y < canvas.height; y += 2) {
+    for (var x = 0; x < canvas.width; x += 2) {
+      final grain = (_hashFast(x, y) % 9) - 4;
+      if (grain == 0) continue;
+      final p = _readRgbFast(canvas, x, y);
+      _blendPixelFast(
+        canvas,
+        x,
+        y,
+        (p.r + grain).clamp(0, 255),
+        (p.g + grain).clamp(0, 255),
+        (p.b + grain).clamp(0, 255),
+        0.18,
+      );
+    }
+  }
+}
+
+void _drawWatercolorStrokeLayer(
   image_lib.Image canvas,
   image_lib.Image source, {
   required int step,
@@ -707,10 +756,11 @@ void _drawPainterlyStrokeLayer(
       final sx = (x + jitter % step - step ~/ 2).clamp(0, source.width - 1);
       final sy =
           (y + (jitter ~/ 9) % step - step ~/ 2).clamp(0, source.height - 1);
-      final color = _posterizePastel(_readRgbFast(source, sx, sy), sx, sy);
-      final angle = _strokeAngleFast(source, sx, sy) + ((jitter % 21) - 10) * 0.025;
+      final color = _pastelWashColor(_readRgbFast(source, sx, sy), sx, sy);
+      final angle =
+          _strokeAngleFast(source, sx, sy) + ((jitter % 21) - 10) * 0.02;
       final strokeLength = math.max(4, length + (jitter % 7) - 3);
-      _drawPainterlyStroke(
+      _drawWatercolorStroke(
         canvas,
         sx,
         sy,
@@ -723,7 +773,7 @@ void _drawPainterlyStrokeLayer(
   }
 }
 
-void _drawPainterlyStroke(
+void _drawWatercolorStroke(
   image_lib.Image canvas,
   int cx,
   int cy,
@@ -745,7 +795,7 @@ void _drawPainterlyStroke(
       final x = (centerX - w * sinA).round();
       final y = (centerY + w * cosA).round();
       if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) continue;
-      final bristle = 0.92 + (_hashFast(x, y) % 17) / 100;
+      final bristle = 0.96 + (_hashFast(x, y) % 9) / 100;
       _blendPixelFast(
         canvas,
         x,
@@ -767,23 +817,28 @@ double _strokeAngleFast(image_lib.Image image, int x, int y) {
   return math.atan2(bottom - top, right - left) + math.pi / 2;
 }
 
-void _drawSubtleDiaryEdges(image_lib.Image canvas, image_lib.Image source) {
+void _drawWarmDiaryEdges(image_lib.Image canvas, image_lib.Image source) {
   for (var y = 2; y < source.height - 2; y += 2) {
     for (var x = 2; x < source.width - 2; x += 2) {
       final gradient =
           (_lumaFast(source, x + 2, y) - _lumaFast(source, x - 2, y)).abs() +
               (_lumaFast(source, x, y + 2) - _lumaFast(source, x, y - 2)).abs();
-      if (gradient < 42) continue;
+      if (gradient < 48) continue;
       final p = _readRgbFast(source, x, y);
-      final edgeTone = _posterizePastel(p, x, y);
+      final luma = (p.r * 0.299 + p.g * 0.587 + p.b * 0.114);
+      final edgeTone = _Rgb(
+        (luma * 0.42 + 92 * 0.58).round().clamp(0, 255),
+        (luma * 0.42 + 78 * 0.58).round().clamp(0, 255),
+        (luma * 0.42 + 62 * 0.58).round().clamp(0, 255),
+      );
       _blendPixelFast(
         canvas,
         x,
         y,
-        (edgeTone.r * 0.68).round().clamp(0, 255),
-        (edgeTone.g * 0.68).round().clamp(0, 255),
-        (edgeTone.b * 0.68).round().clamp(0, 255),
-        0.16,
+        edgeTone.r,
+        edgeTone.g,
+        edgeTone.b,
+        0.11,
       );
     }
   }
