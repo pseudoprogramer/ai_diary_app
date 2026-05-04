@@ -1,6 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as image_lib;
@@ -12,6 +13,8 @@ class GeminiService {
 
   static const String _geminiTextEndpoint =
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+  static const String _geminiImageEndpoint =
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent';
 
   Future<String> generateDiaryFromInputs({
     required DateTime date,
@@ -44,9 +47,12 @@ class GeminiService {
       if (scheduleText.trim().isNotEmpty) '일정:\n$scheduleText',
       if (memo.trim().isNotEmpty) '한 줄 메모: $memo',
       '사진 수: $photoCount장',
-      if (locationHint != null && locationHint.trim().isNotEmpty) '위치 힌트: $locationHint',
-      if (routeSummary != null && routeSummary.trim().isNotEmpty) '동선 요약: $routeSummary',
-      if (eventSummary != null && eventSummary.trim().isNotEmpty) '캘린더 요약: $eventSummary',
+      if (locationHint != null && locationHint.trim().isNotEmpty)
+        '위치 힌트: $locationHint',
+      if (routeSummary != null && routeSummary.trim().isNotEmpty)
+        '동선 요약: $routeSummary',
+      if (eventSummary != null && eventSummary.trim().isNotEmpty)
+        '캘린더 요약: $eventSummary',
       '',
       '출력 형식:',
       '제목 한 줄을 먼저 쓰고, 빈 줄 뒤에 5~8문장의 일기 본문을 써줘.',
@@ -98,21 +104,26 @@ class GeminiService {
     try {
       final uri = Uri.parse('$_geminiTextEndpoint?key=$apiKey');
       final response = await http
-          .post(uri, headers: {'Content-Type': 'application/json'}, body: jsonEncode(body))
+          .post(uri,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(body))
           .timeout(const Duration(seconds: 20));
 
       if (response.statusCode != 200) return null;
 
-      final Map<String, dynamic> json = jsonDecode(response.body) as Map<String, dynamic>;
+      final Map<String, dynamic> json =
+          jsonDecode(response.body) as Map<String, dynamic>;
       final List<dynamic>? candidates = json['candidates'] as List<dynamic>?;
       if (candidates == null || candidates.isEmpty) return null;
 
       final Map<String, dynamic> top = candidates.first as Map<String, dynamic>;
-      final Map<String, dynamic>? content = top['content'] as Map<String, dynamic>?;
+      final Map<String, dynamic>? content =
+          top['content'] as Map<String, dynamic>?;
       final List<dynamic>? parts = content?['parts'] as List<dynamic>?;
       if (parts == null || parts.isEmpty) return null;
 
-      final Map<String, dynamic> firstPart = parts.first as Map<String, dynamic>;
+      final Map<String, dynamic> firstPart =
+          parts.first as Map<String, dynamic>;
       final String? text = firstPart['text'] as String?;
       return (text == null || text.trim().isEmpty) ? null : text.trim();
     } catch (_) {
@@ -122,38 +133,431 @@ class GeminiService {
 
   Future<Uint8List> generateIllustrationBytes({
     required String diaryText,
-    required Uint8List fallbackImageBytes,
+    required Uint8List? fallbackImageBytes,
     bool enableCloud = false,
     int? width,
     int? height,
     String? style,
   }) async {
-    return _generateLocalPastelImage(fallbackImageBytes);
+    if (enableCloud && apiKey.isNotEmpty) {
+      final cloudImage = await _generateCloudIllustrationBytes(
+        diaryText: diaryText,
+        fallbackImageBytes: fallbackImageBytes,
+        width: width,
+        height: height,
+        style: style,
+      );
+      if (cloudImage != null) return cloudImage;
+    }
+
+    if (fallbackImageBytes == null || fallbackImageBytes.isEmpty) {
+      return _generateLocalDiaryCardImage(diaryText,
+          width: width, height: height);
+    }
+    return _generateLocalPastelImage(
+      fallbackImageBytes,
+      width: width,
+      height: height,
+      style: style,
+    );
   }
 
-  Future<Uint8List> _generateLocalPastelImage(Uint8List sourceBytes) async {
+  Future<Uint8List?> _generateCloudIllustrationBytes({
+    required String diaryText,
+    required Uint8List? fallbackImageBytes,
+    int? width,
+    int? height,
+    String? style,
+  }) async {
+    try {
+      final prompt = [
+        'Create a warm illustrated diary-page image.',
+        'Style: ${style?.trim().isNotEmpty == true ? style!.trim() : 'pastel watercolor diary with visible brush strokes'}.',
+        'Use the reference photo only as composition and color inspiration.',
+        'Do not make the image dark, black, gloomy, or heavily filtered.',
+        'Keep it bright, painterly, soft, and emotionally calm.',
+        if (width != null || height != null)
+          'Preferred size hint: ${width ?? 'auto'} x ${height ?? 'auto'}.',
+        'Diary text context:',
+        diaryText,
+      ].join('\n');
+
+      final parts = <Map<String, Object?>>[
+        {'text': prompt},
+      ];
+      if (fallbackImageBytes != null && fallbackImageBytes.isNotEmpty) {
+        final prepared = await compute(_prepareCloudReferenceImage, {
+          'bytes': fallbackImageBytes,
+        });
+        parts.add({
+          'inline_data': {
+            'mime_type': 'image/jpeg',
+            'data': base64Encode(prepared),
+          },
+        });
+      }
+
+      final body = {
+        'contents': [
+          {'parts': parts}
+        ],
+        'generationConfig': {
+          'responseModalities': ['TEXT', 'IMAGE'],
+        },
+      };
+
+      final response = await http
+          .post(
+            Uri.parse(_geminiImageEndpoint),
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey,
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 45));
+
+      if (response.statusCode != 200) return null;
+
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final candidates = json['candidates'] as List<dynamic>?;
+      if (candidates == null || candidates.isEmpty) return null;
+      final content = (candidates.first as Map<String, dynamic>)['content']
+          as Map<String, dynamic>?;
+      final partsJson = content?['parts'] as List<dynamic>?;
+      if (partsJson == null) return null;
+
+      for (final part in partsJson) {
+        final map = part as Map<String, dynamic>;
+        final inlineData = map['inlineData'] as Map<String, dynamic>? ??
+            map['inline_data'] as Map<String, dynamic>?;
+        final data = inlineData?['data'] as String?;
+        if (data != null && data.isNotEmpty) {
+          return base64Decode(data);
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Uint8List _generateLocalDiaryCardImage(String diaryText,
+      {int? width, int? height}) {
+    final int w = (width ?? 960).clamp(512, 1536).toInt();
+    final int h = (height ?? 960).clamp(512, 1536).toInt();
+    final canvas = image_lib.Image(width: w, height: h);
+    final hash = diaryText.codeUnits
+        .fold<int>(0, (value, unit) => (value + unit) & 0xFF);
+
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        final dx = x / w;
+        final dy = y / h;
+        final r = (246 - (dy * 22) + (hash % 14)).round().clamp(0, 255);
+        final g = (235 - (dx * 12) + (hash % 10)).round().clamp(0, 255);
+        final b = (218 + (dy * 18) - (hash % 8)).round().clamp(0, 255);
+        canvas.setPixelRgb(x, y, r, g, b);
+      }
+    }
+
+    final margin = (w * 0.12).round();
+    final top = (h * 0.18).round();
+    final bottom = (h * 0.78).round();
+    for (var y = top; y < bottom; y += 38) {
+      for (var x = margin; x < w - margin; x++) {
+        canvas.setPixelRgb(x, y, 226, 208, 188);
+      }
+    }
+    for (var y = (h * 0.24).round(); y < (h * 0.62).round(); y++) {
+      final double t = (y - h * 0.24) / (h * 0.38);
+      final center = (w * (0.45 + 0.08 * t)).round();
+      final radius = (w * (0.12 + 0.03 * t)).round();
+      for (var x = center - radius; x <= center + radius; x++) {
+        if (x < 0 || x >= w) continue;
+        final dist = (x - center).abs() / radius;
+        if (dist <= 1) {
+          final alpha = 1 - dist;
+          final r = (220 + 18 * alpha).round();
+          final g = (196 + 22 * alpha).round();
+          final b = (172 + 24 * alpha).round();
+          canvas.setPixelRgb(x, y, r, g, b);
+        }
+      }
+    }
+
+    return Uint8List.fromList(image_lib.encodeJpg(canvas, quality: 92));
+  }
+
+  Future<Uint8List> _generateLocalPastelImage(
+    Uint8List sourceBytes, {
+    int? width,
+    int? height,
+    String? style,
+  }) async {
+    final message = <String, Object?>{
+      'bytes': sourceBytes,
+      'width': width,
+      'height': height,
+      'style': style,
+    };
+    try {
+      return await compute(_renderPainterlyImage, message);
+    } catch (_) {
+      try {
+        return _renderPainterlyImage(message);
+      } catch (_) {
+        return _generateLocalPastelImageLegacy(sourceBytes);
+      }
+    }
+  }
+
+  Future<Uint8List> _generateLocalPastelImageLegacy(
+      Uint8List sourceBytes) async {
     try {
       final img = image_lib.decodeImage(sourceBytes);
       if (img == null) return sourceBytes;
 
-      final resized = image_lib.copyResize(
+      final source = image_lib.copyResize(
         img,
-        width: img.width > 1024 ? 1024 : img.width,
+        width: img.width > 640 ? 640 : img.width,
         interpolation: image_lib.Interpolation.average,
       );
-      final softened = image_lib.gaussianBlur(resized, radius: 1);
-      final pastel = image_lib.adjustColor(
+      final softened = image_lib.gaussianBlur(source, radius: 1);
+      final base = image_lib.adjustColor(
         softened,
-        saturation: 0.72,
-        brightness: 0.09,
-        contrast: 0.92,
-        gamma: 0.95,
+        saturation: 0.9,
+        brightness: 0.05,
+        contrast: 1.05,
+        gamma: 0.9,
       );
+      final painted = _paintBrushStrokes(base);
+      final output = _averageLuma(painted) < 28 ? base : painted;
 
-      return Uint8List.fromList(image_lib.encodeJpg(pastel, quality: 92));
+      return Uint8List.fromList(image_lib.encodeJpg(output, quality: 92));
     } catch (_) {
       return sourceBytes;
     }
+  }
+
+  image_lib.Image _paintBrushStrokes(image_lib.Image source) {
+    final w = source.width;
+    final h = source.height;
+    final canvas = image_lib.Image(width: w, height: h);
+    final paper = image_lib.gaussianBlur(source, radius: 7);
+
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        final p = _readRgb(paper, x, y);
+        final texture = _textureAt(x, y);
+        final r = (p.r * 0.82 + 244 * 0.18 + texture).round().clamp(0, 255);
+        final g = (p.g * 0.82 + 236 * 0.18 + texture).round().clamp(0, 255);
+        final b = (p.b * 0.82 + 222 * 0.18 + texture).round().clamp(0, 255);
+        canvas.setPixelRgb(x, y, r, g, b);
+      }
+    }
+
+    _paintStrokeLayer(canvas, source,
+        step: 13, length: 24, width: 5, opacity: 0.5);
+    _paintStrokeLayer(canvas, source,
+        step: 8, length: 17, width: 4, opacity: 0.62);
+    _paintStrokeLayer(canvas, source,
+        step: 5, length: 9, width: 2, opacity: 0.48);
+    _softenStrongEdges(canvas, source);
+
+    return image_lib.adjustColor(
+      canvas,
+      saturation: 1.08,
+      brightness: 0.03,
+      contrast: 0.97,
+      gamma: 0.98,
+    );
+  }
+
+  void _paintStrokeLayer(
+    image_lib.Image canvas,
+    image_lib.Image source, {
+    required int step,
+    required int length,
+    required int width,
+    required double opacity,
+  }) {
+    for (var y = step ~/ 2; y < source.height; y += step) {
+      for (var x = step ~/ 2; x < source.width; x += step) {
+        final jitter = _hash2(x, y);
+        final sx = (x + jitter % step - step ~/ 2).clamp(0, source.width - 1);
+        final sy =
+            (y + (jitter ~/ 7) % step - step ~/ 2).clamp(0, source.height - 1);
+        final color =
+            _sampleColor(source, sx, sy, radius: math.max(1, step ~/ 3));
+        final angle =
+            _strokeAngle(source, sx, sy) + ((jitter % 17) - 8) * 0.025;
+        final strokeLength = length + (jitter % 7) - 3;
+        _drawBrushStroke(
+          canvas,
+          sx,
+          sy,
+          color,
+          angle: angle,
+          halfLength: math.max(4, strokeLength),
+          halfWidth: width,
+          opacity: opacity,
+        );
+      }
+    }
+  }
+
+  void _drawBrushStroke(
+    image_lib.Image canvas,
+    int cx,
+    int cy,
+    _Rgb color, {
+    required double angle,
+    required int halfLength,
+    required int halfWidth,
+    required double opacity,
+  }) {
+    final cosA = math.cos(angle);
+    final sinA = math.sin(angle);
+    final minX = (cx - halfLength - halfWidth).clamp(0, canvas.width - 1);
+    final maxX = (cx + halfLength + halfWidth).clamp(0, canvas.width - 1);
+    final minY = (cy - halfLength - halfWidth).clamp(0, canvas.height - 1);
+    final maxY = (cy + halfLength + halfWidth).clamp(0, canvas.height - 1);
+
+    for (var y = minY; y <= maxY; y++) {
+      for (var x = minX; x <= maxX; x++) {
+        final dx = x - cx;
+        final dy = y - cy;
+        final localX = dx * cosA + dy * sinA;
+        final localY = -dx * sinA + dy * cosA;
+        if (localX.abs() > halfLength) continue;
+
+        final taper = 1 - (localX.abs() / halfLength) * 0.55;
+        final edge = localY.abs() / (halfWidth * taper + 0.5);
+        if (edge > 1) continue;
+
+        final bristle = 0.78 + (_hash2(x, y) % 18) / 100;
+        final alpha = opacity * (1 - edge * edge) * bristle;
+        _blendPixel(
+          canvas,
+          x,
+          y,
+          (color.r * bristle).round().clamp(0, 255),
+          (color.g * bristle).round().clamp(0, 255),
+          (color.b * bristle).round().clamp(0, 255),
+          alpha.clamp(0, 1),
+        );
+      }
+    }
+  }
+
+  void _softenStrongEdges(image_lib.Image canvas, image_lib.Image source) {
+    for (var y = 2; y < source.height - 2; y += 2) {
+      for (var x = 2; x < source.width - 2; x += 2) {
+        final gradient =
+            (_luma(source, x + 2, y) - _luma(source, x - 2, y)).abs() +
+                (_luma(source, x, y + 2) - _luma(source, x, y - 2)).abs();
+        if (gradient < 38) continue;
+        final p = _readRgb(source, x, y);
+        _blendPixel(
+          canvas,
+          x,
+          y,
+          (p.r * 0.72).round(),
+          (p.g * 0.72).round(),
+          (p.b * 0.72).round(),
+          0.24,
+        );
+      }
+    }
+  }
+
+  _Rgb _sampleColor(image_lib.Image image, int cx, int cy,
+      {required int radius}) {
+    var r = 0.0;
+    var g = 0.0;
+    var b = 0.0;
+    var count = 0;
+    for (var y = cy - radius; y <= cy + radius; y++) {
+      if (y < 0 || y >= image.height) continue;
+      for (var x = cx - radius; x <= cx + radius; x++) {
+        if (x < 0 || x >= image.width) continue;
+        final p = _readRgb(image, x, y);
+        r += p.r;
+        g += p.g;
+        b += p.b;
+        count++;
+      }
+    }
+    if (count == 0) return const _Rgb(230, 220, 205);
+    return _Rgb(
+      (r / count).round(),
+      (g / count).round(),
+      (b / count).round(),
+    );
+  }
+
+  double _strokeAngle(image_lib.Image image, int x, int y) {
+    final left = _luma(image, (x - 2).clamp(0, image.width - 1), y);
+    final right = _luma(image, (x + 2).clamp(0, image.width - 1), y);
+    final top = _luma(image, x, (y - 2).clamp(0, image.height - 1));
+    final bottom = _luma(image, x, (y + 2).clamp(0, image.height - 1));
+    return math.atan2(bottom - top, right - left) + math.pi / 2;
+  }
+
+  double _luma(image_lib.Image image, int x, int y) {
+    final p = _readRgb(image, x, y);
+    return p.r * 0.299 + p.g * 0.587 + p.b * 0.114;
+  }
+
+  double _averageLuma(image_lib.Image image) {
+    var total = 0.0;
+    var count = 0;
+    final step = math.max(1, math.min(image.width, image.height) ~/ 80);
+    for (var y = 0; y < image.height; y += step) {
+      for (var x = 0; x < image.width; x += step) {
+        total += _luma(image, x, y);
+        count++;
+      }
+    }
+    return count == 0 ? 0 : total / count;
+  }
+
+  _Rgb _readRgb(image_lib.Image image, int x, int y) {
+    final p = image.getPixel(x, y);
+    return _Rgb(
+      (p.rNormalized * 255).round().clamp(0, 255),
+      (p.gNormalized * 255).round().clamp(0, 255),
+      (p.bNormalized * 255).round().clamp(0, 255),
+    );
+  }
+
+  int _textureAt(int x, int y) => (_hash2(x, y) % 17) - 8;
+
+  int _hash2(int x, int y) {
+    var v = x * 374761393 + y * 668265263;
+    v = (v ^ (v >> 13)) * 1274126177;
+    return (v ^ (v >> 16)) & 0x7fffffff;
+  }
+
+  void _blendPixel(
+    image_lib.Image image,
+    int x,
+    int y,
+    int r,
+    int g,
+    int b,
+    double alpha,
+  ) {
+    final dst = image.getPixel(x, y);
+    final inv = 1 - alpha;
+    image.setPixelRgb(
+      x,
+      y,
+      ((dst.rNormalized * 255) * inv + r * alpha).round().clamp(0, 255),
+      ((dst.gNormalized * 255) * inv + g * alpha).round().clamp(0, 255),
+      ((dst.bNormalized * 255) * inv + b * alpha).round().clamp(0, 255),
+    );
   }
 
   String _localDiaryFallback({
@@ -170,8 +574,10 @@ class GeminiService {
         .where((line) => line.isNotEmpty)
         .toList();
     final firstMoment = scheduleLines.isEmpty ? '작은 순간들' : scheduleLines.first;
-    final memoLine = memo.trim().isEmpty ? '' : "\n\n메모로 남긴 '$memo'라는 말이 오늘의 중심에 조용히 남았다.";
-    final photoLine = photoCount == 0 ? '' : '\n\n사진 $photoCount장이 오늘의 색을 붙잡아 주었다.';
+    final memoLine =
+        memo.trim().isEmpty ? '' : "\n\n메모로 남긴 '$memo'라는 말이 오늘의 중심에 조용히 남았다.";
+    final photoLine =
+        photoCount == 0 ? '' : '\n\n사진 $photoCount장이 오늘의 색을 붙잡아 주었다.';
 
     return [
       '오늘의 작은 결',
@@ -188,4 +594,275 @@ class GeminiService {
   }
 
   String _two(int v) => v.toString().padLeft(2, '0');
+}
+
+Uint8List _renderPainterlyImage(Map<String, Object?> message) {
+  final sourceBytes = message['bytes'] as Uint8List;
+  final width = message['width'] as int?;
+  final height = message['height'] as int?;
+  final style = (message['style'] as String?)?.toLowerCase() ?? '';
+
+  final decoded = image_lib.decodeImage(sourceBytes);
+  if (decoded == null) return sourceBytes;
+
+  final oriented = image_lib.bakeOrientation(decoded);
+  final maxSide = _targetMaxSide(oriented, width: width, height: height);
+  final resized = _resizeByMaxSide(oriented, maxSide);
+  final styleStrength = style.contains('bold') || style.contains('oil')
+      ? 1.16
+      : style.contains('sketch')
+          ? 0.88
+          : 1.05;
+  final base = image_lib.adjustColor(
+    resized,
+    saturation: styleStrength,
+    brightness: 0.05,
+    contrast: 0.96,
+    gamma: 0.94,
+  );
+
+  final blockSize = math.max(96, math.min(base.width, base.height) ~/ 3);
+  final blocky = base.width >= base.height
+      ? image_lib.copyResize(
+          base,
+          width: blockSize,
+          interpolation: image_lib.Interpolation.average,
+        )
+      : image_lib.copyResize(
+          base,
+          height: blockSize,
+          interpolation: image_lib.Interpolation.average,
+        );
+  final wash = image_lib.copyResize(
+    blocky,
+    width: base.width,
+    height: base.height,
+    interpolation: image_lib.Interpolation.nearest,
+  );
+  final canvas = image_lib.Image(width: base.width, height: base.height);
+
+  for (var y = 0; y < canvas.height; y++) {
+    for (var x = 0; x < canvas.width; x++) {
+      final p = _readRgbFast(wash, x, y);
+      final source = _readRgbFast(base, x, y);
+      final texture = (_hashFast(x, y) % 15) - 7;
+      final r = (p.r * 0.62 + source.r * 0.2 + 248 * 0.18 + texture).round();
+      final g = (p.g * 0.62 + source.g * 0.2 + 240 * 0.18 + texture).round();
+      final b = (p.b * 0.62 + source.b * 0.2 + 226 * 0.18 + texture).round();
+      canvas.setPixelRgb(
+        x,
+        y,
+        r.clamp(0, 255),
+        g.clamp(0, 255),
+        b.clamp(0, 255),
+      );
+    }
+  }
+
+  _drawFastStrokeLayer(canvas, base, step: 9, length: 8, opacity: 0.42);
+  _drawFastStrokeLayer(canvas, base, step: 6, length: 5, opacity: 0.28);
+  _drawFastEdges(canvas, base);
+
+  final adjusted = _averageLumaFast(canvas) < 44
+      ? image_lib.adjustColor(canvas, brightness: 0.18, contrast: 0.9)
+      : canvas;
+
+  return Uint8List.fromList(image_lib.encodeJpg(adjusted, quality: 88));
+}
+
+Uint8List _prepareCloudReferenceImage(Map<String, Object?> message) {
+  final sourceBytes = message['bytes'] as Uint8List;
+  final decoded = image_lib.decodeImage(sourceBytes);
+  if (decoded == null) return sourceBytes;
+  final oriented = image_lib.bakeOrientation(decoded);
+  final resized = _resizeByMaxSide(oriented, 1024);
+  return Uint8List.fromList(image_lib.encodeJpg(resized, quality: 86));
+}
+
+int _targetMaxSide(image_lib.Image source, {int? width, int? height}) {
+  final requested = math.max(width ?? 0, height ?? 0);
+  if (requested > 0) return requested.clamp(384, 768).toInt();
+  final sourceMax = math.max(source.width, source.height);
+  if (sourceMax < 384) return sourceMax;
+  return 512;
+}
+
+image_lib.Image _resizeByMaxSide(image_lib.Image source, int maxSide) {
+  final sourceMax = math.max(source.width, source.height);
+  if (sourceMax <= maxSide) return image_lib.Image.from(source);
+  if (source.width >= source.height) {
+    return image_lib.copyResize(
+      source,
+      width: maxSide,
+      interpolation: image_lib.Interpolation.average,
+    );
+  }
+  return image_lib.copyResize(
+    source,
+    height: maxSide,
+    interpolation: image_lib.Interpolation.average,
+  );
+}
+
+void _drawFastStrokeLayer(
+  image_lib.Image canvas,
+  image_lib.Image source, {
+  required int step,
+  required int length,
+  required double opacity,
+}) {
+  for (var y = step ~/ 2; y < source.height; y += step) {
+    for (var x = step ~/ 2; x < source.width; x += step) {
+      final jitter = _hashFast(x, y);
+      final sx = (x + jitter % step - step ~/ 2).clamp(0, source.width - 1);
+      final sy =
+          (y + (jitter ~/ 11) % step - step ~/ 2).clamp(0, source.height - 1);
+      final color = _readRgbFast(source, sx, sy);
+      final angle =
+          _fastStrokeAngle(source, sx, sy) + ((jitter % 23) - 11) * 0.018;
+      final strokeLength = math.max(3, length + (jitter % 5) - 2);
+      _drawFastStroke(
+        canvas,
+        sx,
+        sy,
+        color,
+        angle: angle,
+        length: strokeLength,
+        opacity: opacity,
+      );
+    }
+  }
+}
+
+void _drawFastStroke(
+  image_lib.Image canvas,
+  int cx,
+  int cy,
+  _Rgb color, {
+  required double angle,
+  required int length,
+  required double opacity,
+}) {
+  final cosA = math.cos(angle);
+  final sinA = math.sin(angle);
+  for (var i = -length; i <= length; i++) {
+    final t = i / length;
+    final fade = (1 - t.abs() * 0.55) * opacity;
+    final x = (cx + i * cosA).round();
+    final y = (cy + i * sinA).round();
+    if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) continue;
+    final bristle = 0.86 + (_hashFast(x, y) % 18) / 100;
+    _blendPixelFast(
+      canvas,
+      x,
+      y,
+      (color.r * bristle).round().clamp(0, 255),
+      (color.g * bristle).round().clamp(0, 255),
+      (color.b * bristle).round().clamp(0, 255),
+      fade.clamp(0, 1),
+    );
+    final nx = (x - sinA).round();
+    final ny = (y + cosA).round();
+    if (nx >= 0 && nx < canvas.width && ny >= 0 && ny < canvas.height) {
+      _blendPixelFast(
+        canvas,
+        nx,
+        ny,
+        color.r,
+        color.g,
+        color.b,
+        (fade * 0.45).clamp(0, 1),
+      );
+    }
+  }
+}
+
+void _drawFastEdges(image_lib.Image canvas, image_lib.Image source) {
+  for (var y = 2; y < source.height - 2; y += 2) {
+    for (var x = 2; x < source.width - 2; x += 2) {
+      final gradient =
+          (_lumaFast(source, x + 2, y) - _lumaFast(source, x - 2, y)).abs() +
+              (_lumaFast(source, x, y + 2) - _lumaFast(source, x, y - 2)).abs();
+      if (gradient < 34) continue;
+      final p = _readRgbFast(source, x, y);
+      _blendPixelFast(
+        canvas,
+        x,
+        y,
+        (p.r * 0.72).round(),
+        (p.g * 0.72).round(),
+        (p.b * 0.72).round(),
+        0.2,
+      );
+    }
+  }
+}
+
+double _fastStrokeAngle(image_lib.Image image, int x, int y) {
+  final left = _lumaFast(image, (x - 2).clamp(0, image.width - 1), y);
+  final right = _lumaFast(image, (x + 2).clamp(0, image.width - 1), y);
+  final top = _lumaFast(image, x, (y - 2).clamp(0, image.height - 1));
+  final bottom = _lumaFast(image, x, (y + 2).clamp(0, image.height - 1));
+  return math.atan2(bottom - top, right - left) + math.pi / 2;
+}
+
+double _averageLumaFast(image_lib.Image image) {
+  var total = 0.0;
+  var count = 0;
+  final step = math.max(1, math.min(image.width, image.height) ~/ 96);
+  for (var y = 0; y < image.height; y += step) {
+    for (var x = 0; x < image.width; x += step) {
+      total += _lumaFast(image, x, y);
+      count++;
+    }
+  }
+  return count == 0 ? 0 : total / count;
+}
+
+double _lumaFast(image_lib.Image image, int x, int y) {
+  final p = _readRgbFast(image, x, y);
+  return p.r * 0.299 + p.g * 0.587 + p.b * 0.114;
+}
+
+_Rgb _readRgbFast(image_lib.Image image, int x, int y) {
+  final p = image.getPixel(x, y);
+  return _Rgb(
+    (p.rNormalized * 255).round().clamp(0, 255),
+    (p.gNormalized * 255).round().clamp(0, 255),
+    (p.bNormalized * 255).round().clamp(0, 255),
+  );
+}
+
+void _blendPixelFast(
+  image_lib.Image image,
+  int x,
+  int y,
+  int r,
+  int g,
+  int b,
+  double alpha,
+) {
+  final dst = image.getPixel(x, y);
+  final inv = 1 - alpha;
+  image.setPixelRgb(
+    x,
+    y,
+    ((dst.rNormalized * 255) * inv + r * alpha).round().clamp(0, 255),
+    ((dst.gNormalized * 255) * inv + g * alpha).round().clamp(0, 255),
+    ((dst.bNormalized * 255) * inv + b * alpha).round().clamp(0, 255),
+  );
+}
+
+int _hashFast(int x, int y) {
+  var v = x * 374761393 + y * 668265263;
+  v = (v ^ (v >> 13)) * 1274126177;
+  return (v ^ (v >> 16)) & 0x7fffffff;
+}
+
+class _Rgb {
+  final int r;
+  final int g;
+  final int b;
+
+  const _Rgb(this.r, this.g, this.b);
 }

@@ -80,7 +80,8 @@ class HomeViewModel extends ChangeNotifier {
   String? get diaryText => _diaryText;
   Uint8List? get generatedImageBytes => _generatedImageBytes;
   Uint8List? get originalImageBytes => _originalImageBytes;
-  Uint8List? get todayRepresentativeImageBytes => _todayRepresentativeImageBytes;
+  Uint8List? get todayRepresentativeImageBytes =>
+      _todayRepresentativeImageBytes;
   bool get showOriginal => _showOriginal;
   String? get lastError => _lastError;
   String get mood => _mood;
@@ -110,14 +111,13 @@ class HomeViewModel extends ChangeNotifier {
   Future<void> initialize() async {
     await loadHistory();
     await _loadSettings();
-    await requestLocationAndFetch();
-    await refreshTodayContext();
   }
 
   Future<void> requestLocationAndFetch() async {
     final pos = await _locationService.getCurrentPosition();
     if (pos != null) {
-      _lastPosition = PositionData(latitude: pos.latitude, longitude: pos.longitude);
+      _lastPosition =
+          PositionData(latitude: pos.latitude, longitude: pos.longitude);
       _placeLabel = await _locationService.reverseGeocode(
         latitude: pos.latitude,
         longitude: pos.longitude,
@@ -135,7 +135,8 @@ class HomeViewModel extends ChangeNotifier {
       _todaySegments = context.segments;
       _todayContextSummary = context.toPromptSummary();
       _todayRepresentativeImageBytes = context.representativeImageBytes;
-      if (_selectedPhotoBytes.isEmpty && _todayRepresentativeImageBytes != null) {
+      if (_selectedPhotoBytes.isEmpty &&
+          _todayRepresentativeImageBytes != null) {
         _originalImageBytes = _todayRepresentativeImageBytes;
         _generatedImageBytes = _todayRepresentativeImageBytes;
       }
@@ -188,7 +189,8 @@ class HomeViewModel extends ChangeNotifier {
 
   void toggleShowOriginal() => setShowOriginal(!_showOriginal);
 
-  void updatePositionFromPipeline({required double lat, required double lon, String? placeLabel}) {
+  void updatePositionFromPipeline(
+      {required double lat, required double lon, String? placeLabel}) {
     _lastPosition = PositionData(latitude: lat, longitude: lon);
     _placeLabel = placeLabel ?? _placeLabel;
     notifyListeners();
@@ -217,7 +219,8 @@ class HomeViewModel extends ChangeNotifier {
       _selectedPhotoBytes = bytes;
       _originalImageBytes = bytes.first;
       _generatedImageBytes = bytes.first;
-      _lastPhotoTakenAt = await _readPhotoTakenAt(photos.first) ?? DateTime.now();
+      _lastPhotoTakenAt =
+          await _readPhotoTakenAt(photos.first) ?? DateTime.now();
       _showOriginal = false;
       notifyListeners();
     } catch (_) {
@@ -235,7 +238,8 @@ class HomeViewModel extends ChangeNotifier {
 
   Future<void> createAiDiary() async {
     await pickPhotos();
-    if (_selectedPhotoBytes.isNotEmpty || _todayRepresentativeImageBytes != null) {
+    if (_selectedPhotoBytes.isNotEmpty ||
+        _todayRepresentativeImageBytes != null) {
       await createDailyDiary();
     }
   }
@@ -244,11 +248,9 @@ class HomeViewModel extends ChangeNotifier {
     if (_isLoading) return;
     final activePhotoBytes = _selectedPhotoBytes.isNotEmpty
         ? _selectedPhotoBytes
-        : (_todayRepresentativeImageBytes == null ? const <Uint8List>[] : <Uint8List>[_todayRepresentativeImageBytes!]);
-    if (activePhotoBytes.isEmpty) {
-      _setError('오늘 사진을 찾지 못했습니다. 사진을 직접 선택하거나 사진첩 권한을 확인해 주세요.');
-      return;
-    }
+        : (_todayRepresentativeImageBytes == null
+            ? const <Uint8List>[]
+            : <Uint8List>[_todayRepresentativeImageBytes!]);
 
     _isLoading = true;
     _lastError = null;
@@ -264,7 +266,9 @@ class HomeViewModel extends ChangeNotifier {
       final eventSummary = await CalendarService().buildTodaySummary();
       final scheduleSource = _scheduleText.trim().isNotEmpty
           ? _scheduleText
-          : (_todayContextSummary.trim().isNotEmpty ? _todayContextSummary : (eventSummary ?? ''));
+          : (_todayContextSummary.trim().isNotEmpty
+              ? _todayContextSummary
+              : (eventSummary ?? ''));
 
       final text = await _geminiService.generateDiaryFromInputs(
         date: takenAt,
@@ -281,14 +285,17 @@ class HomeViewModel extends ChangeNotifier {
 
       final imageBytes = await _geminiService.generateIllustrationBytes(
         diaryText: text,
-        fallbackImageBytes: activePhotoBytes.first,
-        enableCloud: false,
+        fallbackImageBytes:
+            activePhotoBytes.isEmpty ? null : activePhotoBytes.first,
+        enableCloud: _imageCloudEnabled,
         width: _imageWidth,
         height: _imageHeight,
         style: _imageStyle,
       );
       _generatedImageBytes = imageBytes;
-      _originalImageBytes ??= activePhotoBytes.first;
+      if (activePhotoBytes.isNotEmpty) {
+        _originalImageBytes ??= activePhotoBytes.first;
+      }
 
       final saved = await _persistEntry(
         text: text,
@@ -306,7 +313,8 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> generateFromAuto(Uint8List selectedBytes, DateTime takenAt) async {
+  Future<void> generateFromAuto(
+      Uint8List selectedBytes, DateTime takenAt) async {
     _selectedPhotoBytes = [selectedBytes];
     _selectedPhotos = const [];
     _originalImageBytes = selectedBytes;
@@ -325,7 +333,8 @@ class HomeViewModel extends ChangeNotifier {
   Future<String?> _buildRouteSummaryForToday() async {
     try {
       final now = DateTime.now();
-      return await LocationLogService().buildRouteSummary(DateTime(now.year, now.month, now.day));
+      return await LocationLogService()
+          .buildRouteSummary(DateTime(now.year, now.month, now.day));
     } catch (_) {
       return null;
     }
@@ -359,7 +368,7 @@ class HomeViewModel extends ChangeNotifier {
     _historyLimit = prefs.getInt(_historyLimitKey) ?? 100;
     _runHour = prefs.getInt(_runHourKey) ?? 23;
     _runMinute = prefs.getInt(_runMinuteKey) ?? 0;
-    _imageCloudEnabled = false;
+    _imageCloudEnabled = prefs.getBool(_imgCloudKey) ?? false;
     _imageWidth = prefs.getInt(_imgWidthKey);
     _imageHeight = prefs.getInt(_imgHeightKey);
     _imageStyle = prefs.getString(_imgStyleKey) ?? 'pastel watercolor diary';
@@ -404,7 +413,8 @@ class HomeViewModel extends ChangeNotifier {
       }
       final now = DateTime.now();
       await LocationLogService().appendSample(
-        LocationSample(latitude: pos.latitude, longitude: pos.longitude, timestamp: now),
+        LocationSample(
+            latitude: pos.latitude, longitude: pos.longitude, timestamp: now),
       );
       _lastSampleAt = now;
       notifyListeners();
@@ -473,7 +483,8 @@ class HomeViewModel extends ChangeNotifier {
     if (_history.length <= _historyLimit) return;
     final prefs = await SharedPreferences.getInstance();
     final trimmed = _history.take(_historyLimit).toList();
-    await prefs.setStringList(_historyPrefsKey, trimmed.map((e) => e.toJsonString()).toList());
+    await prefs.setStringList(
+        _historyPrefsKey, trimmed.map((e) => e.toJsonString()).toList());
     _history = trimmed;
     notifyListeners();
   }
@@ -507,9 +518,9 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   Future<void> setImageCloudEnabled(bool value) async {
-    _imageCloudEnabled = false;
+    _imageCloudEnabled = value;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_imgCloudKey, false);
+    await prefs.setBool(_imgCloudKey, value);
     notifyListeners();
   }
 
@@ -531,7 +542,8 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   Future<void> setImageStyle(String? value) async {
-    _imageStyle = (value != null && value.trim().isNotEmpty) ? value.trim() : null;
+    _imageStyle =
+        (value != null && value.trim().isNotEmpty) ? value.trim() : null;
     final prefs = await SharedPreferences.getInstance();
     if (_imageStyle == null) {
       await prefs.remove(_imgStyleKey);
@@ -551,7 +563,8 @@ class HomeViewModel extends ChangeNotifier {
         if (item.id == id) target = item;
       }
       final kept = items.where((item) => item.id != id).toList();
-      await prefs.setStringList(_historyPrefsKey, kept.map((e) => e.toJsonString()).toList());
+      await prefs.setStringList(
+          _historyPrefsKey, kept.map((e) => e.toJsonString()).toList());
       if (target != null) {
         final file = File(target.imagePath);
         if (await file.exists()) await file.delete();
@@ -591,7 +604,8 @@ class HomeViewModel extends ChangeNotifier {
         return false;
       }
       final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/harugyeol_saved_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      final file = File(
+          '${dir.path}/harugyeol_saved_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await file.writeAsBytes(bytes, flush: true);
       return true;
     } catch (_) {
@@ -608,7 +622,8 @@ class HomeViewModel extends ChangeNotifier {
         return null;
       }
       final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/harugyeol_share_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      final file = File(
+          '${dir.path}/harugyeol_share_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await file.writeAsBytes(bytes, flush: true);
       return file;
     } catch (_) {

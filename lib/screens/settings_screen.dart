@@ -16,6 +16,7 @@ class SettingsScreen extends StatelessWidget {
       body: Consumer<HomeViewModel>(
         builder: (context, vm, _) {
           return ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             children: [
               SwitchListTile(
                 title: const Text('매일 자동 생성'),
@@ -32,7 +33,8 @@ class SettingsScreen extends StatelessWidget {
               ),
               ListTile(
                 title: const Text('자동 생성 시각'),
-                subtitle: Text('${vm.runHour.toString().padLeft(2, '0')}:${vm.runMinute.toString().padLeft(2, '0')}'),
+                subtitle: Text(
+                    '${vm.runHour.toString().padLeft(2, '0')}:${vm.runMinute.toString().padLeft(2, '0')}'),
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: () => _editRunTime(context, vm),
               ),
@@ -56,8 +58,16 @@ class SettingsScreen extends StatelessWidget {
               const Divider(height: 24),
               const ListTile(
                 title: Text('이미지 생성 방식'),
-                subtitle: Text('현재 버전은 사진을 서버로 보내지 않고 기기 안에서만 파스텔 다이어리 이미지로 변환합니다.'),
+                subtitle:
+                    Text('기본은 기기 안에서 빠르게 만들고, 고품질 모드는 Gemini 이미지 생성을 사용합니다.'),
                 leading: Icon(Icons.memory_rounded),
+              ),
+              SwitchListTile(
+                title: const Text('고품질 AI 이미지 생성'),
+                subtitle: const Text(
+                    '켜면 Gemini로 사진과 일기 내용을 보내 그림을 생성합니다. 실패하면 로컬 생성으로 대체됩니다.'),
+                value: vm.imageCloudEnabled,
+                onChanged: vm.setImageCloudEnabled,
               ),
               ListTile(
                 title: const Text('로컬 이미지 스타일'),
@@ -91,7 +101,8 @@ class SettingsScreen extends StatelessWidget {
                 onTap: () async {
                   try {
                     const intent = AndroidIntent(
-                      action: 'android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS',
+                      action:
+                          'android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS',
                     );
                     await intent.launch();
                   } catch (_) {
@@ -133,8 +144,12 @@ class SettingsScreen extends StatelessWidget {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('저장')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('저장')),
         ],
       ),
     );
@@ -147,7 +162,8 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
-  Future<void> _editSamplingMinutes(BuildContext context, HomeViewModel vm) async {
+  Future<void> _editSamplingMinutes(
+      BuildContext context, HomeViewModel vm) async {
     final ctrl = TextEditingController(text: vm.samplingMinutes.toString());
     final ok = await showDialog<bool>(
       context: context,
@@ -159,29 +175,40 @@ class SettingsScreen extends StatelessWidget {
           decoration: const InputDecoration(hintText: '분 단위, 최소 5'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('저장')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('저장')),
         ],
       ),
     );
     if (ok == true) {
-      await vm.setSamplingMinutes(int.tryParse(ctrl.text.trim()) ?? vm.samplingMinutes);
+      await vm.setSamplingMinutes(
+          int.tryParse(ctrl.text.trim()) ?? vm.samplingMinutes);
     }
   }
 
   Future<void> _editImageStyle(BuildContext context, HomeViewModel vm) async {
-    final ctrl = TextEditingController(text: vm.imageStyle ?? 'pastel watercolor diary');
+    final ctrl =
+        TextEditingController(text: vm.imageStyle ?? 'pastel watercolor diary');
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('로컬 이미지 스타일'),
         content: TextField(
           controller: ctrl,
-          decoration: const InputDecoration(hintText: '예: pastel watercolor diary'),
+          decoration:
+              const InputDecoration(hintText: '예: pastel watercolor diary'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('저장')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('저장')),
         ],
       ),
     );
@@ -202,13 +229,18 @@ class SettingsScreen extends StatelessWidget {
           decoration: const InputDecoration(hintText: '최소 10개'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('저장')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('저장')),
         ],
       ),
     );
     if (ok == true) {
-      await vm.setHistoryLimit(int.tryParse(ctrl.text.trim()) ?? vm.historyLimit);
+      await vm
+          .setHistoryLimit(int.tryParse(ctrl.text.trim()) ?? vm.historyLimit);
     }
   }
 }

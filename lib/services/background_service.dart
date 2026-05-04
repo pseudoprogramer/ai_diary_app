@@ -36,14 +36,20 @@ class BackgroundService {
       },
     );
 
-    await BackgroundFetch.scheduleTask(TaskConfig(
-      taskId: taskId,
-      delay: 60 * 1000,
-      periodic: true,
-      stopOnTerminate: false,
-      enableHeadless: true,
-      requiredNetworkType: NetworkType.ANY,
-    ));
+    try {
+      await BackgroundFetch.scheduleTask(TaskConfig(
+        taskId: taskId,
+        delay: 60 * 1000,
+        periodic: true,
+        stopOnTerminate: false,
+        enableHeadless: true,
+        requiredNetworkType: NetworkType.ANY,
+      ));
+    } catch (_) {
+      // iOS can reject custom BGProcessing registration on some signing/device
+      // states. The default fetch configured above is enough to keep the app
+      // usable, so do not crash on launch.
+    }
   }
 
   static Future<void> stop() async {
@@ -170,5 +176,4 @@ class BackgroundService {
 
   static bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
 }
-
 
