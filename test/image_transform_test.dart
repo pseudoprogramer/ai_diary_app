@@ -28,6 +28,31 @@ void main() {
     expect(_averageLuma(decoded!), greaterThan(60));
     expect(_averageDelta(source, decoded), greaterThan(14));
   });
+
+  test('photo trace brush keeps the source recognizable', () {
+    final source = image_lib.Image(width: 96, height: 96);
+    for (var y = 0; y < source.height; y++) {
+      for (var x = 0; x < source.width; x++) {
+        final checker = ((x ~/ 18) + (y ~/ 18)).isEven;
+        source.setPixelRgb(
+          x,
+          y,
+          checker ? 210 : 70,
+          checker ? 170 : 95,
+          checker ? 115 : 130,
+        );
+      }
+    }
+
+    final transformed = debugRenderPhotoTraceBrushImageForTest(
+      Uint8List.fromList(image_lib.encodeJpg(source)),
+    );
+    final decoded = image_lib.decodeImage(transformed);
+
+    expect(decoded, isNotNull);
+    expect(_averageLuma(decoded!), greaterThan(50));
+    expect(_averageDelta(source, decoded), inInclusiveRange(2, 70));
+  });
 }
 
 double _averageLuma(image_lib.Image image) {

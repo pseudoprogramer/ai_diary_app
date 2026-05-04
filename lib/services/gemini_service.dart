@@ -306,6 +306,22 @@ class GeminiService {
     int? height,
     String? style,
   }) async {
+    final message = <String, Object?>{
+      'bytes': sourceBytes,
+      'width': width,
+      'height': height,
+      'style': style,
+    };
+    try {
+      return await compute(_renderPhotoTraceBrushImage, message);
+    } catch (_) {
+      try {
+        return _renderPhotoTraceBrushImage(message);
+      } catch (_) {
+        // Continue into the older style-transfer path below.
+      }
+    }
+
     try {
       final lowerStyle = style?.toLowerCase() ?? '';
       final strength = lowerStyle.contains('oil') ||
@@ -324,12 +340,6 @@ class GeminiService {
       // unavailable, then fall back to the lightweight deterministic renderer.
     }
 
-    final message = <String, Object?>{
-      'bytes': sourceBytes,
-      'width': width,
-      'height': height,
-      'style': style,
-    };
     try {
       return await compute(_renderPainterlyImage, message);
     } catch (_) {
@@ -717,6 +727,11 @@ Uint8List debugRenderPainterlyImageForTest(Uint8List sourceBytes) {
   return _renderPainterlyImage({'bytes': sourceBytes});
 }
 
+@visibleForTesting
+Uint8List debugRenderPhotoTraceBrushImageForTest(Uint8List sourceBytes) {
+  return _renderPhotoTraceBrushImage({'bytes': sourceBytes});
+}
+
 _Rgb _pastelWashColor(_Rgb color, int x, int y) {
   int softQuantize(num v) {
     const step = 14;
@@ -738,12 +753,21 @@ _Rgb _pastelWashColor(_Rgb color, int x, int y) {
   final grain = (_hashFast(x ~/ 7, y ~/ 7) % 7) - 3;
 
   return _Rgb(
-    softQuantize(
-        color.r * colorWeight + luma * grayWeight + 250 * paperWeight + lift + grain),
-    softQuantize(
-        color.g * colorWeight + luma * grayWeight + 242 * paperWeight + lift + grain),
-    softQuantize(
-        color.b * colorWeight + luma * grayWeight + 228 * paperWeight + lift + grain),
+    softQuantize(color.r * colorWeight +
+        luma * grayWeight +
+        250 * paperWeight +
+        lift +
+        grain),
+    softQuantize(color.g * colorWeight +
+        luma * grayWeight +
+        242 * paperWeight +
+        lift +
+        grain),
+    softQuantize(color.b * colorWeight +
+        luma * grayWeight +
+        228 * paperWeight +
+        lift +
+        grain),
   );
 }
 
@@ -761,6 +785,25 @@ void _drawPaperGrain(image_lib.Image canvas) {
         (p.g + grain).clamp(0, 255),
         (p.b + grain).clamp(0, 255),
         0.18,
+      );
+    }
+  }
+}
+
+void _drawSubtlePaperGrain(image_lib.Image canvas) {
+  for (var y = 0; y < canvas.height; y += 3) {
+    for (var x = 0; x < canvas.width; x += 3) {
+      final grain = (_hashFast(x, y) % 5) - 2;
+      if (grain == 0) continue;
+      final p = _readRgbFast(canvas, x, y);
+      _blendPixelFast(
+        canvas,
+        x,
+        y,
+        (p.r + grain).clamp(0, 255),
+        (p.g + grain).clamp(0, 255),
+        (p.b + grain).clamp(0, 255),
+        0.08,
       );
     }
   }
@@ -874,6 +917,166 @@ Uint8List _prepareCloudReferenceImage(Map<String, Object?> message) {
   final oriented = image_lib.bakeOrientation(decoded);
   final resized = _resizeByMaxSide(oriented, 1024);
   return Uint8List.fromList(image_lib.encodeJpg(resized, quality: 86));
+}
+
+Uint8List _renderPhotoTraceBrushImage(Map<String, Object?> message) {
+  final sourceBytes = message['bytes'] as Uint8List;
+  final width = message['width'] as int?;
+  final height = message['height'] as int?;
+
+  final decoded = image_lib.decodeImage(sourceBytes);
+  if (decoded == null) return sourceBytes;
+
+  final oriented = image_lib.bakeOrientation(decoded);
+  final requestedMax = _targetMaxSide(oriented, width: width, height: height);
+  final maxSide = requestedMax.clamp(512, 768).toInt();
+  final resized = _resizeByMaxSide(oriented, maxSide);
+  final source = image_lib.adjustColor(
+    resized,
+    saturation: 0.98,
+    brightness: 1.01,
+    contrast: 1.0,
+    gamma: 1.0,
+  );
+
+  final oil = _oilPaintTrace(source, radius: 2, levels: 32);
+  final detail = image_lib.adjustColor(
+    source,
+    saturation: 0.98,
+    brightness: 1.01,
+    contrast: 0.98,
+    gamma: 1.0,
+  );
+  final focused = _blendFocusDetails(
+    painted: oil,
+    detail: detail,
+    source: source,
+  );
+  var canvas = image_lib.adjustColor(
+    focused,
+    saturation: 0.96,
+    brightness: 1.02,
+    contrast: 0.96,
+    gamma: 1.0,
+  );
+
+  _drawSubtlePaperGrain(canvas);
+
+  if (_averageLumaFast(canvas) < 36) {
+    canvas = image_lib.adjustColor(canvas, brightness: 1.16, contrast: 0.9);
+  }
+
+  return Uint8List.fromList(image_lib.encodeJpg(canvas, quality: 91));
+}
+
+image_lib.Image _blendFocusDetails({
+  required image_lib.Image painted,
+  required image_lib.Image detail,
+  required image_lib.Image source,
+}) {
+  final mask = image_lib.Image(width: source.width, height: source.height);
+  final cx = (source.width - 1) / 2;
+  final cy = (source.height - 1) / 2;
+  final maxRadius = math.sqrt(cx * cx + cy * cy);
+
+  for (var y = 0; y < source.height; y++) {
+    for (var x = 0; x < source.width; x++) {
+      final p = _readRgbFast(source, x, y);
+      final maxChannel = math.max(p.r, math.max(p.g, p.b));
+      final minChannel = math.min(p.r, math.min(p.g, p.b));
+      final chroma = (maxChannel - minChannel) / 255;
+
+      final gx = x == 0 || x == source.width - 1
+          ? 0
+          : (_lumaFast(source, x + 1, y) - _lumaFast(source, x - 1, y)).abs();
+      final gy = y == 0 || y == source.height - 1
+          ? 0
+          : (_lumaFast(source, x, y + 1) - _lumaFast(source, x, y - 1)).abs();
+      final edge = ((gx + gy) / 160).clamp(0.0, 1.0);
+
+      final dist = math.sqrt(math.pow(x - cx, 2) + math.pow(y - cy, 2));
+      final center = (1 - dist / maxRadius).clamp(0.0, 1.0);
+
+      final focus =
+          (chroma * 0.30 + edge * 0.30 + center * 0.08).clamp(0.0, 1.0);
+      final value = (focus * 255).round().clamp(0, 255);
+      mask.setPixelRgb(x, y, value, value, value);
+    }
+  }
+
+  final softMask = image_lib.gaussianBlur(mask, radius: 7);
+  final output = image_lib.Image(width: painted.width, height: painted.height);
+
+  for (var y = 0; y < output.height; y++) {
+    for (var x = 0; x < output.width; x++) {
+      final a = _readRgbFast(painted, x, y);
+      final b = _readRgbFast(detail, x, y);
+      final m = softMask.getPixel(x, y);
+      final alpha = ((m.rNormalized * 0.38).clamp(0.0, 0.38)).toDouble();
+      final keepPaint = 1 - alpha;
+      output.setPixelRgb(
+        x,
+        y,
+        (a.r * keepPaint + b.r * alpha).round().clamp(0, 255),
+        (a.g * keepPaint + b.g * alpha).round().clamp(0, 255),
+        (a.b * keepPaint + b.b * alpha).round().clamp(0, 255),
+      );
+    }
+  }
+
+  return output;
+}
+
+image_lib.Image _oilPaintTrace(
+  image_lib.Image source, {
+  required int radius,
+  required int levels,
+}) {
+  final output = image_lib.Image(width: source.width, height: source.height);
+  final counts = List<int>.filled(levels, 0);
+  final sumsR = List<int>.filled(levels, 0);
+  final sumsG = List<int>.filled(levels, 0);
+  final sumsB = List<int>.filled(levels, 0);
+
+  for (var y = 0; y < source.height; y++) {
+    for (var x = 0; x < source.width; x++) {
+      counts.fillRange(0, levels, 0);
+      sumsR.fillRange(0, levels, 0);
+      sumsG.fillRange(0, levels, 0);
+      sumsB.fillRange(0, levels, 0);
+
+      final minY = math.max(0, y - radius);
+      final maxY = math.min(source.height - 1, y + radius);
+      final minX = math.max(0, x - radius);
+      final maxX = math.min(source.width - 1, x + radius);
+
+      for (var yy = minY; yy <= maxY; yy++) {
+        for (var xx = minX; xx <= maxX; xx++) {
+          final p = _readRgbFast(source, xx, yy);
+          final luma = p.r * 0.299 + p.g * 0.587 + p.b * 0.114;
+          final level = ((luma / 256) * levels).floor().clamp(0, levels - 1);
+          counts[level]++;
+          sumsR[level] += p.r;
+          sumsG[level] += p.g;
+          sumsB[level] += p.b;
+        }
+      }
+
+      var bestLevel = 0;
+      for (var i = 1; i < levels; i++) {
+        if (counts[i] > counts[bestLevel]) bestLevel = i;
+      }
+      final count = math.max(1, counts[bestLevel]);
+      output.setPixelRgb(
+        x,
+        y,
+        sumsR[bestLevel] ~/ count,
+        sumsG[bestLevel] ~/ count,
+        sumsB[bestLevel] ~/ count,
+      );
+    }
+  }
+  return output;
 }
 
 int _targetMaxSide(image_lib.Image source, {int? width, int? height}) {

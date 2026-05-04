@@ -35,6 +35,30 @@ PRESETS = {
             "distorted anatomy, text, watermark, logo, low quality"
         ),
     },
+    "gouache_clean": {
+        "prompt": (
+            "fully repainted gouache illustration, visible brush texture, "
+            "simplified objects, soft pastel palette, clean blank paper border, "
+            "cozy daily memory, hand painted, not photorealistic, no handwriting, "
+            "no letters, no text"
+        ),
+        "negative": (
+            "realistic photo, camera photo, readable text, fake text, gibberish text, "
+            "handwriting, letters, words, sign text, artist signature, watermark, "
+            "logo, harsh contrast, scary, low quality"
+        ),
+    },
+    "watercolor_safe": {
+        "prompt": (
+            "soft hand painted watercolor scene, simplified objects, clean blank "
+            "paper border, gentle brush wash, calm cozy daily memory, no signs, "
+            "no handwriting, no letters, no text"
+        ),
+        "negative": (
+            "photorealistic, readable text, fake text, gibberish text, handwriting, "
+            "letters, words, sign text, signature, watermark, logo, low quality"
+        ),
+    },
     "vangogh": {
         "prompt": (
             "expressive post impressionist oil painting diary illustration, "
