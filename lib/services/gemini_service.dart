@@ -333,7 +333,7 @@ class GeminiService {
       final base = image_lib.adjustColor(
         softened,
         saturation: 0.9,
-        brightness: 0.05,
+        brightness: 1.05,
         contrast: 1.05,
         gamma: 0.9,
       );
@@ -374,7 +374,7 @@ class GeminiService {
     return image_lib.adjustColor(
       canvas,
       saturation: 1.08,
-      brightness: 0.03,
+      brightness: 1.03,
       contrast: 0.97,
       gamma: 0.98,
     );
@@ -618,14 +618,14 @@ Uint8List _renderPainterlyImage(Map<String, Object?> message) {
   final base = image_lib.adjustColor(
     softened,
     saturation: 0.86,
-    brightness: 0.055,
+    brightness: 1.055,
     contrast: 0.94,
     gamma: 0.98,
   );
   final detail = image_lib.adjustColor(
     resized,
     saturation: 0.82,
-    brightness: 0.035,
+    brightness: 1.035,
     contrast: 0.9,
     gamma: 0.98,
   );
@@ -661,10 +661,15 @@ Uint8List _renderPainterlyImage(Map<String, Object?> message) {
   _drawSubtleDiaryEdges(canvas, resized);
 
   final adjusted = _averageLumaFast(canvas) < 44
-      ? image_lib.adjustColor(canvas, brightness: 0.18, contrast: 0.9)
+      ? image_lib.adjustColor(canvas, brightness: 1.18, contrast: 0.9)
       : canvas;
 
   return Uint8List.fromList(image_lib.encodeJpg(adjusted, quality: 88));
+}
+
+@visibleForTesting
+Uint8List debugRenderPainterlyImageForTest(Uint8List sourceBytes) {
+  return _renderPainterlyImage({'bytes': sourceBytes});
 }
 
 void _drawSubtleDiaryEdges(image_lib.Image canvas, image_lib.Image source) {
