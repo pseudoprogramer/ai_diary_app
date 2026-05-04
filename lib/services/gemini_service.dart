@@ -6,8 +6,13 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as image_lib;
 
+import 'local_style_transfer_service.dart';
+
 class GeminiService {
   GeminiService();
+
+  final LocalStyleTransferService _localStyleTransfer =
+      LocalStyleTransferService();
 
   String get apiKey => dotenv.env['GEMINI_API_KEY'] ?? '';
 
@@ -301,6 +306,24 @@ class GeminiService {
     int? height,
     String? style,
   }) async {
+    try {
+      final lowerStyle = style?.toLowerCase() ?? '';
+      final strength = lowerStyle.contains('oil') ||
+              lowerStyle.contains('brush') ||
+              lowerStyle.contains('van') ||
+              lowerStyle.contains('붓')
+          ? 0.66
+          : 0.56;
+      return await _localStyleTransfer.stylize(
+        sourceBytes,
+        style: style,
+        strength: strength,
+      );
+    } catch (_) {
+      // Keep the app usable on devices where the local TFLite runtime/model is
+      // unavailable, then fall back to the lightweight deterministic renderer.
+    }
+
     final message = <String, Object?>{
       'bytes': sourceBytes,
       'width': width,
