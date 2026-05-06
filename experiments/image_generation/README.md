@@ -10,6 +10,8 @@ There are now two experiment directions:
 
 - `run_img2img.py`: generative img2img. More creative, but can drift away from the source photo.
 - `run_brushify.py`: photo-trace brush conversion. Keeps the original composition recognizable.
+- `run_composed_brush.py`: lightly recompose first, then apply a recognizable brush trace.
+- `run_viewpoint_brush.py`: approximate a different camera viewpoint with a 2.5D depth warp, then apply brush trace.
 
 ## Goal
 
@@ -61,6 +63,51 @@ Useful brush presets:
 - `opencv_watercolor_trace`: softer, calmer, less chunky.
 - `bold_oil_trace`: dependency-free fallback with stronger contrast.
 - `recognizable_brush`: dependency-free fallback that stays closest to the photo.
+
+## Hybrid Compose + Brush Test
+
+Use this when plain brush conversion feels too close to the original photo, but
+full img2img drifts too far away:
+
+```bash
+python run_composed_brush.py \
+  --input ~/Desktop/cafe.jpg \
+  --strength 0.42 \
+  --steps 24 \
+  --seed 91 \
+  --brush-preset opencv_oil_trace \
+  --paper-border \
+  --keep-intermediate
+```
+
+Recommended tuning:
+
+- Start with `--strength 0.35` to `0.45` for a small composition cleanup.
+- Avoid `--strength 0.6+` unless you want a new scene instead of a memory.
+- Keep the brush step conservative so the recomposed subject remains readable.
+
+## Viewpoint + Brush Test
+
+Use this when the goal is to feel like the same memory from a slightly different
+camera angle. This is a 2.5D approximation, not a true 3D reconstruction, so it
+works best as a subtle viewpoint nudge.
+
+```bash
+python run_viewpoint_brush.py \
+  --input ~/Desktop/cafe.jpg \
+  --viewpoint upper_right \
+  --parallax 28 \
+  --zoom 1.04 \
+  --brush-preset opencv_oil_trace \
+  --paper-border \
+  --keep-intermediate
+```
+
+Recommended tuning:
+
+- Start with `--parallax 20` to `35`.
+- Use `left`, `right`, `upper_left`, or `upper_right` before trying stronger vertical shifts.
+- If edges stretch or smear, lower `--parallax` before changing the brush preset.
 
 ## Useful Presets
 

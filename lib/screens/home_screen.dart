@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/day_context.dart';
+import '../models/diary_entry.dart';
 import '../viewmodels/home_viewmodel.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
@@ -20,10 +23,15 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _memoController = TextEditingController();
   bool _compareMode = false;
   double _compare = 0.5;
+  late DateTime _visibleMonth;
+  late DateTime _selectedDay;
 
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _visibleMonth = DateTime(now.year, now.month);
+    _selectedDay = DateTime(now.year, now.month, now.day);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<HomeViewModel>().initialize();
     });
@@ -96,6 +104,22 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 16),
                 const _TodayFlowSection(),
+                const SizedBox(height: 12),
+                _MonthlyDiaryCalendar(
+                  visibleMonth: _visibleMonth,
+                  selectedDay: _selectedDay,
+                  onMonthChanged: (month) {
+                    setState(() {
+                      _visibleMonth = DateTime(month.year, month.month);
+                    });
+                  },
+                  onDaySelected: (day) {
+                    setState(() {
+                      _selectedDay = DateTime(day.year, day.month, day.day);
+                      _visibleMonth = DateTime(day.year, day.month);
+                    });
+                  },
+                ),
                 const SizedBox(height: 12),
                 _Section(
                   child: Column(
@@ -435,6 +459,324 @@ class _SegmentTile extends StatelessWidget {
   }
 }
 
+class _MonthlyDiaryCalendar extends StatelessWidget {
+  final DateTime visibleMonth;
+  final DateTime selectedDay;
+  final ValueChanged<DateTime> onMonthChanged;
+  final ValueChanged<DateTime> onDaySelected;
+
+  const _MonthlyDiaryCalendar({
+    required this.visibleMonth,
+    required this.selectedDay,
+    required this.onMonthChanged,
+    required this.onDaySelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Consumer<HomeViewModel>(
+      builder: (context, vm, _) {
+        final entriesByDay = <DateTime, List<DiaryEntry>>{};
+        for (final entry in vm.history) {
+          final day = _dateOnly(entry.photoTakenAt ?? entry.createdAt);
+          entriesByDay.putIfAbsent(day, () => <DiaryEntry>[]).add(entry);
+        }
+        final selectedEntries =
+            entriesByDay[_dateOnly(selectedDay)] ?? const <DiaryEntry>[];
+
+        return _Section(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: _LabelRow(
+                      icon: Icons.calendar_month_rounded,
+                      label: '월별 기록',
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '이전 달',
+                    onPressed: () => onMonthChanged(
+                      DateTime(visibleMonth.year, visibleMonth.month - 1),
+                    ),
+                    icon: const Icon(Icons.chevron_left_rounded),
+                  ),
+                  Text(
+                    '${visibleMonth.year}.${_two(visibleMonth.month)}',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  IconButton(
+                    tooltip: '다음 달',
+                    onPressed: () => onMonthChanged(
+                      DateTime(visibleMonth.year, visibleMonth.month + 1),
+                    ),
+                    icon: const Icon(Icons.chevron_right_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: const ['일', '월', '화', '수', '목', '금', '토']
+                    .map(
+                      (day) => Expanded(
+                        child: Center(
+                          child: Text(
+                            day,
+                            style: const TextStyle(
+                              color: Color(0xFF8D8378),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 8),
+              _CalendarGrid(
+                visibleMonth: visibleMonth,
+                selectedDay: selectedDay,
+                entriesByDay: entriesByDay,
+                onDaySelected: onDaySelected,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                '${selectedDay.month}월 ${selectedDay.day}일의 기록',
+                style: theme.textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 10),
+              if (selectedEntries.isEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color:
+                        colors.surfaceContainerHighest.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '이 날에 저장된 일기가 아직 없어요.',
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: colors.onSurfaceVariant),
+                  ),
+                )
+              else
+                SizedBox(
+                  height: 292,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: selectedEntries.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 12),
+                    itemBuilder: (context, index) {
+                      return _PolaroidDiaryCard(entry: selectedEntries[index]);
+                    },
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CalendarGrid extends StatelessWidget {
+  final DateTime visibleMonth;
+  final DateTime selectedDay;
+  final Map<DateTime, List<DiaryEntry>> entriesByDay;
+  final ValueChanged<DateTime> onDaySelected;
+
+  const _CalendarGrid({
+    required this.visibleMonth,
+    required this.selectedDay,
+    required this.entriesByDay,
+    required this.onDaySelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final first = DateTime(visibleMonth.year, visibleMonth.month);
+    final firstOffset = first.weekday % 7;
+    final start = first.subtract(Duration(days: firstOffset));
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: 42,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 7,
+        mainAxisSpacing: 6,
+        crossAxisSpacing: 6,
+        childAspectRatio: 1,
+      ),
+      itemBuilder: (context, index) {
+        final day = _dateOnly(start.add(Duration(days: index)));
+        final inMonth = day.month == visibleMonth.month;
+        final selected = _sameDay(day, selectedDay);
+        final today = _sameDay(day, DateTime.now());
+        final hasEntry = entriesByDay.containsKey(day);
+
+        return _CalendarDayButton(
+          day: day,
+          inMonth: inMonth,
+          selected: selected,
+          today: today,
+          hasEntry: hasEntry,
+          onTap: () => onDaySelected(day),
+        );
+      },
+    );
+  }
+}
+
+class _CalendarDayButton extends StatelessWidget {
+  final DateTime day;
+  final bool inMonth;
+  final bool selected;
+  final bool today;
+  final bool hasEntry;
+  final VoidCallback onTap;
+
+  const _CalendarDayButton({
+    required this.day,
+    required this.inMonth,
+    required this.selected,
+    required this.today,
+    required this.hasEntry,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final background = selected
+        ? const Color(0xFFBFDDB8)
+        : today
+            ? const Color(0xFFF1F6EC)
+            : Colors.white;
+    final borderColor = selected
+        ? const Color(0xFF6F8F6C)
+        : today
+            ? const Color(0xFFBFDDB8)
+            : const Color(0xFFEADFD3);
+    final textColor = inMonth
+        ? const Color(0xFF2F2A25)
+        : colors.onSurfaceVariant.withValues(alpha: 0.38);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: borderColor),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Text(
+              '${day.day}',
+              style: TextStyle(
+                color: textColor,
+                fontWeight:
+                    selected || today ? FontWeight.w800 : FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            if (hasEntry)
+              Positioned(
+                bottom: 5,
+                child: Container(
+                  width: 5,
+                  height: 5,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF6F8F6C),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PolaroidDiaryCard extends StatelessWidget {
+  final DiaryEntry entry;
+
+  const _PolaroidDiaryCard({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final file = File(entry.imagePath);
+    final exists = file.existsSync();
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _showEntryDialog(context, entry),
+      child: Container(
+        width: 188,
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFFEFA),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFE6DACB)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x1A6A5848),
+              blurRadius: 14,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AspectRatio(
+              aspectRatio: 1,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(5),
+                child: exists
+                    ? Image.file(file, fit: BoxFit.cover)
+                    : Container(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        child: const Icon(Icons.image_not_supported_outlined),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _firstDiaryLine(entry.text),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                height: 1.35,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _entryTime(entry),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _DiaryPreview extends StatelessWidget {
   final bool compareMode;
   final double compare;
@@ -598,6 +940,86 @@ class _ActionRow extends StatelessWidget {
       },
     );
   }
+}
+
+DateTime _dateOnly(DateTime value) =>
+    DateTime(value.year, value.month, value.day);
+
+bool _sameDay(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
+
+String _firstDiaryLine(String text) {
+  final lines = text
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+  if (lines.isEmpty) return '오늘의 작은 결';
+  if (lines.length == 1) return lines.first;
+  return lines[1].length < 8 ? lines.first : lines[1];
+}
+
+String _entryTime(DiaryEntry entry) {
+  final dt = entry.photoTakenAt ?? entry.createdAt;
+  return '${dt.year}.${_two(dt.month)}.${_two(dt.day)}';
+}
+
+String _two(int value) => value.toString().padLeft(2, '0');
+
+void _showEntryDialog(BuildContext context, DiaryEntry entry) {
+  final theme = Theme.of(context);
+  final file = File(entry.imagePath);
+  final exists = file.existsSync();
+  showDialog(
+    context: context,
+    builder: (_) {
+      return Dialog(
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (exists)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.file(file, fit: BoxFit.cover),
+                    )
+                  else
+                    Container(
+                      height: 220,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Icon(Icons.image_not_supported_outlined),
+                    ),
+                  const SizedBox(height: 14),
+                  Text(
+                    _entryTime(entry),
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    entry.text,
+                    style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _Section extends StatelessWidget {

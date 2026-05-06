@@ -58,7 +58,8 @@ class SettingsScreen extends StatelessWidget {
               const Divider(height: 24),
               const ListTile(
                 title: Text('이미지 생성 방식'),
-                subtitle: Text('사진은 기기 안에서만 감성 변환합니다. 얼굴과 기억이 틀어지는 AI 재생성은 사용하지 않습니다.'),
+                subtitle: Text(
+                    '사진은 기기 안에서만 감성 변환합니다. 얼굴과 기억이 틀어지는 AI 재생성은 사용하지 않습니다.'),
                 leading: Icon(Icons.memory_rounded),
               ),
               ListTile(
@@ -74,6 +75,22 @@ class SettingsScreen extends StatelessWidget {
                 onTap: () => _editHistoryLimit(context, vm),
               ),
               const Divider(height: 24),
+              ListTile(
+                title: const Text('사진 전체 접근 권한'),
+                subtitle: const Text('오늘의 대표 사진을 자동으로 고르려면 전체 사진 접근이 필요합니다.'),
+                trailing: const Icon(Icons.photo_library_rounded),
+                onTap: () async {
+                  final granted = await vm.requestFullPhotoAccess();
+                  if (!context.mounted) return;
+                  if (granted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('사진 전체 접근 권한이 준비됐습니다.')),
+                    );
+                  } else {
+                    await openAppSettings();
+                  }
+                },
+              ),
               const ListTile(
                 title: Text('권한 설정 열기'),
                 subtitle: Text('위치, 사진, 캘린더 권한을 확인합니다.'),

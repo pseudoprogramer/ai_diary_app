@@ -423,6 +423,22 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
+  Future<bool> requestFullPhotoAccess() async {
+    try {
+      final state = await const PhotoService().requestFullPhotoAccess();
+      if (state.name == 'authorized') return true;
+      if (state.name == 'limited') {
+        _setError('자동 선정이 제대로 작동하려면 사진 권한을 전체 접근으로 바꿔 주세요.');
+        return false;
+      }
+      _setError('사진 접근 권한이 필요합니다. 설정에서 전체 사진 접근을 허용해 주세요.');
+      return false;
+    } catch (_) {
+      _setError('사진 권한을 확인하지 못했습니다.');
+      return false;
+    }
+  }
+
   Future<void> _ensureBackgroundLocationPermission() async {
     try {
       PermissionStatus status = await Permission.locationAlways.status;

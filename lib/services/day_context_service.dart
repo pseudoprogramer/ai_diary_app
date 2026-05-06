@@ -28,7 +28,8 @@ class DayContextService {
 
     for (final event in events) {
       final eventEnd = event.end ?? event.start.add(const Duration(hours: 1));
-      final matchedPhotos = _photosNearEvent(sortedPhotos, event.start, eventEnd);
+      final matchedPhotos =
+          _photosNearEvent(sortedPhotos, event.start, eventEnd);
       usedPhotoIds.addAll(matchedPhotos.map((asset) => asset.id));
       segments.add(
         DaySegment(
@@ -44,7 +45,9 @@ class DayContextService {
       );
     }
 
-    final unmatchedPhotos = sortedPhotos.where((asset) => !usedPhotoIds.contains(asset.id)).toList();
+    final unmatchedPhotos = sortedPhotos
+        .where((asset) => !usedPhotoIds.contains(asset.id))
+        .toList();
     for (final cluster in _clusterPhotos(unmatchedPhotos)) {
       segments.add(
         DaySegment(
@@ -60,7 +63,8 @@ class DayContextService {
     }
 
     segments.sort((a, b) => a.start.compareTo(b.start));
-    final representative = await _loadRepresentativeImage(sortedPhotos, segments);
+    final representative =
+        await _loadRepresentativeImage(sortedPhotos, segments);
 
     return DayContext(
       date: date,
@@ -69,7 +73,8 @@ class DayContextService {
     );
   }
 
-  List<AssetEntity> _photosNearEvent(List<AssetEntity> photos, DateTime start, DateTime end) {
+  List<AssetEntity> _photosNearEvent(
+      List<AssetEntity> photos, DateTime start, DateTime end) {
     final windowStart = start.subtract(const Duration(minutes: 45));
     final windowEnd = end.add(const Duration(minutes: 45));
     return photos.where((asset) {
@@ -85,7 +90,8 @@ class DayContextService {
 
     for (final photo in photos.skip(1)) {
       final previous = current.last;
-      final gap = photo.createDateTime.difference(previous.createDateTime).abs();
+      final gap =
+          photo.createDateTime.difference(previous.createDateTime).abs();
       final samePlace = _isNearby(previous, photo);
       if (gap <= const Duration(minutes: 75) || samePlace) {
         current.add(photo);
@@ -95,7 +101,9 @@ class DayContextService {
       }
     }
     clusters.add(_PhotoCluster(current));
-    return clusters.where((cluster) => cluster.assets.isNotEmpty).toList(growable: false);
+    return clusters
+        .where((cluster) => cluster.assets.isNotEmpty)
+        .toList(growable: false);
   }
 
   bool _isNearby(AssetEntity a, AssetEntity b) {
@@ -103,7 +111,9 @@ class DayContextService {
     final double? alon = a.longitude;
     final double? blat = b.latitude;
     final double? blon = b.longitude;
-    if (alat == null || alon == null || blat == null || blon == null) return false;
+    if (alat == null || alon == null || blat == null || blon == null) {
+      return false;
+    }
     if (alat == 0 || alon == 0 || blat == 0 || blon == 0) return false;
     final latDiff = (alat - blat).abs();
     final lonDiff = (alon - blon).abs();
@@ -129,16 +139,21 @@ class DayContextService {
     return null;
   }
 
-  Future<Uint8List?> _loadRepresentativeImage(List<AssetEntity> photos, List<DaySegment> segments) async {
+  Future<Uint8List?> _loadRepresentativeImage(
+      List<AssetEntity> photos, List<DaySegment> segments) async {
     if (photos.isEmpty) return null;
-    final preferredHour = segments.isEmpty ? 14 : segments.first.start.hour;
-    final scored = List<AssetEntity>.of(photos)
-      ..sort((a, b) {
-        final aScore = (a.createDateTime.hour - preferredHour).abs() + (a.width * a.height == 0 ? 100 : 0);
-        final bScore = (b.createDateTime.hour - preferredHour).abs() + (b.width * b.height == 0 ? 100 : 0);
-        return aScore.compareTo(bScore);
-      });
-    for (final asset in scored.take(8)) {
+    final eventTimes = segments
+        .where((segment) => segment.source == 'calendar')
+        .map((segment) => segment.start)
+        .toList(growable: false);
+    final selected = await photoService.chooseImportantSet(
+      photos,
+      maxCount: 8,
+      eventTimes: eventTimes,
+      minGap: const Duration(minutes: 30),
+    );
+    final candidates = selected.isEmpty ? photos : selected;
+    for (final asset in candidates.take(8)) {
       final bytes = await asset.originBytes;
       if (bytes != null && bytes.isNotEmpty) return bytes;
     }
